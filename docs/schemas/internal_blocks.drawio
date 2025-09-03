@@ -1,0 +1,274 @@
+<mxfile host="65bd71144e">
+    <diagram id="gpt5_page_1" name="1. Запуск программы — внутренняя логика">
+        <mxGraphModel dx="2004" dy="1160" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="827" pageHeight="1169" math="0" shadow="0">
+            <root>
+                <mxCell id="0"/>
+                <mxCell id="1" parent="0"/>
+                <mxCell id="3" value="Инициализация логгера&#xa;Загрузка .env" style="html=1;dashed=0;whiteSpace=wrap;shape=mxgraph.dfd.start;strokeColor=#001DBC;fillColor=#0050ef;fontColor=#ffffff;" parent="1" vertex="1">
+                    <mxGeometry x="120" y="40" width="220" height="60" as="geometry"/>
+                </mxCell>
+                <mxCell id="4" value="Валидация конфигов&#xa;(пути, Mongo URI)" style="html=1;dashed=0;whiteSpace=wrap;shape=mxgraph.dfd.start;strokeColor=#001DBC;fillColor=#0050ef;fontColor=#ffffff;" parent="1" vertex="1">
+                    <mxGeometry x="120" y="140" width="220" height="60" as="geometry"/>
+                </mxCell>
+                <mxCell id="5" value="Конфиги валидны?" style="shape=rhombus;whiteSpace=wrap;html=1;strokeColor=#001DBC;fillColor=#0050ef;fontColor=#ffffff;" parent="1" vertex="1">
+                    <mxGeometry x="160" y="240" width="220" height="100" as="geometry"/>
+                </mxCell>
+                <mxCell id="6" value="Фатальная ошибка&#xa;exit(1)" style="html=1;dashed=0;whiteSpace=wrap;shape=mxgraph.dfd.start;strokeColor=#001DBC;fillColor=#0050ef;fontColor=#ffffff;" parent="1" vertex="1">
+                    <mxGeometry x="10" y="380" width="200" height="60" as="geometry"/>
+                </mxCell>
+                <mxCell id="7" value="Проверка single instance&#xa;(PID/lock)" style="html=1;dashed=0;whiteSpace=wrap;shape=mxgraph.dfd.start;strokeColor=#001DBC;fillColor=#0050ef;fontColor=#ffffff;" parent="1" vertex="1">
+                    <mxGeometry x="340" y="380" width="260" height="60" as="geometry"/>
+                </mxCell>
+                <mxCell id="8" value="Уже запущен?" style="shape=rhombus;whiteSpace=wrap;html=1;strokeColor=#001DBC;fillColor=#0050ef;fontColor=#ffffff;" parent="1" vertex="1">
+                    <mxGeometry x="380" y="470" width="200" height="100" as="geometry"/>
+                </mxCell>
+                <mxCell id="9" value="Выход" style="html=1;dashed=0;whiteSpace=wrap;shape=mxgraph.dfd.start;strokeColor=#001DBC;fillColor=#0050ef;fontColor=#ffffff;" parent="1" vertex="1">
+                    <mxGeometry x="260" y="620" width="140" height="50" as="geometry"/>
+                </mxCell>
+                <mxCell id="10" value="Старт Prefect flow" style="html=1;dashed=0;whiteSpace=wrap;shape=mxgraph.dfd.start;strokeColor=#001DBC;fillColor=#0050ef;fontColor=#ffffff;" parent="1" vertex="1">
+                    <mxGeometry x="520" y="620" width="200" height="50" as="geometry"/>
+                </mxCell>
+                <mxCell id="11" style="edgeStyle=none;html=1;" parent="1" source="3" target="4" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="12" style="edgeStyle=none;html=1;" parent="1" source="4" target="5" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="13" value="Нет" style="edgeStyle=none;html=1;" parent="1" source="5" target="6" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="14" value="Да" style="edgeStyle=none;html=1;" parent="1" source="5" target="7" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="15" style="edgeStyle=none;html=1;" parent="1" source="7" target="8" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="16" value="Да" style="edgeStyle=none;html=1;" parent="1" source="8" target="9" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="17" value="Нет" style="edgeStyle=none;html=1;" parent="1" source="8" target="10" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+            </root>
+        </mxGraphModel>
+    </diagram>
+    <diagram id="gpt5_page_2" name="2. Связь с БД/ФС/Slurm — внутренняя логика">
+        <mxGraphModel dx="2004" dy="1160" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="827" pageHeight="1169" math="0" shadow="0">
+            <root>
+                <mxCell id="0"/>
+                <mxCell id="1" parent="0"/>
+                <mxCell id="3" value="Mongo: connect &amp; ping&#xa;ensureIndexes()" style="html=1;dashed=0;whiteSpace=wrap;shape=mxgraph.dfd.start;strokeColor=#001DBC;fillColor=#0050ef;fontColor=#ffffff;" parent="1" vertex="1">
+                    <mxGeometry x="60" y="40" width="260" height="60" as="geometry"/>
+                </mxCell>
+                <mxCell id="4" value="FS: права SOURCE/LINK/RESULT&#xa;первичный индекс + симлинки" style="html=1;dashed=0;whiteSpace=wrap;shape=mxgraph.dfd.start;strokeColor=#2D7600;fillColor=#60a917;fontColor=#ffffff;" parent="1" vertex="1">
+                    <mxGeometry x="390" y="140" width="320" height="60" as="geometry"/>
+                </mxCell>
+                <mxCell id="5" value="Slurm: sinfo&#xa;проверка доступности" style="html=1;dashed=0;whiteSpace=wrap;shape=mxgraph.dfd.start;strokeColor=#2D7600;fillColor=#60a917;fontColor=#ffffff;" parent="1" vertex="1">
+                    <mxGeometry x="60" y="140" width="260" height="60" as="geometry"/>
+                </mxCell>
+                <mxCell id="6" value="Референсы: load YAML&#xa;refs_version (хэш)" style="html=1;dashed=0;whiteSpace=wrap;shape=mxgraph.dfd.start;strokeColor=#2D7600;fillColor=#60a917;fontColor=#ffffff;" parent="1" vertex="1">
+                    <mxGeometry x="390" y="40" width="320" height="60" as="geometry"/>
+                </mxCell>
+                <mxCell id="7" value="Все компоненты доступны?" style="shape=rhombus;whiteSpace=wrap;html=1;strokeColor=#001DBC;fillColor=#0050ef;fontColor=#ffffff;" parent="1" vertex="1">
+                    <mxGeometry x="240" y="240" width="260" height="100" as="geometry"/>
+                </mxCell>
+                <mxCell id="8" value="Фатальная ошибка&#xa;exit(2)" style="html=1;dashed=0;whiteSpace=wrap;shape=mxgraph.dfd.start;strokeColor=#001DBC;fillColor=#0050ef;fontColor=#ffffff;" parent="1" vertex="1">
+                    <mxGeometry x="60" y="380" width="200" height="60" as="geometry"/>
+                </mxCell>
+                <mxCell id="9" value="Готово к работе" style="html=1;dashed=0;whiteSpace=wrap;shape=mxgraph.dfd.start;strokeColor=#001DBC;fillColor=#0050ef;fontColor=#ffffff;" parent="1" vertex="1">
+                    <mxGeometry x="420" y="380" width="200" height="60" as="geometry"/>
+                </mxCell>
+                <mxCell id="10" style="edgeStyle=none;html=1;" parent="1" source="3" target="5" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="11" style="edgeStyle=none;html=1;" parent="1" source="4" target="7" edge="1">
+                    <mxGeometry relative="1" as="geometry">
+                        <mxPoint x="480" y="120" as="targetPoint"/>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="12" style="edgeStyle=none;html=1;" parent="1" source="5" target="7" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="13" style="edgeStyle=none;html=1;entryX=0.5;entryY=0.5;entryDx=0;entryDy=-30;entryPerimeter=0;" parent="1" source="6" target="4" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="14" value="Нет" style="edgeStyle=none;html=1;" parent="1" source="7" target="8" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="15" value="Да" style="edgeStyle=none;html=1;" parent="1" source="7" target="9" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+            </root>
+        </mxGraphModel>
+    </diagram>
+    <diagram id="gpt5_page_3" name="3. Запуск вотчдога — внутренняя логика">
+        <mxGraphModel dx="2004" dy="1160" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="827" pageHeight="1169" math="0" shadow="0">
+            <root>
+                <mxCell id="0"/>
+                <mxCell id="1" parent="0"/>
+                <mxCell id="3" value="Старт цикла вотчдога&#xa;(tick)" style="html=1;dashed=0;whiteSpace=wrap;shape=mxgraph.dfd.start;strokeColor=#001DBC;fillColor=#0050ef;fontColor=#ffffff;" parent="1" vertex="1">
+                    <mxGeometry x="140" y="40" width="260" height="60" as="geometry"/>
+                </mxCell>
+                <mxCell id="4" value="Обновить референсы&#xa;(если mtime изменился)" style="html=1;dashed=0;whiteSpace=wrap;shape=mxgraph.dfd.start;strokeColor=#001DBC;fillColor=#0050ef;fontColor=#ffffff;" parent="1" vertex="1">
+                    <mxGeometry x="140" y="120" width="260" height="60" as="geometry"/>
+                </mxCell>
+                <mxCell id="5" value="Выбрать кандидатов из Mongo&#xa;(status READY/STABLE)" style="html=1;dashed=0;whiteSpace=wrap;shape=mxgraph.dfd.start;strokeColor=#001DBC;fillColor=#0050ef;fontColor=#ffffff;" parent="1" vertex="1">
+                    <mxGeometry x="140" y="200" width="300" height="60" as="geometry"/>
+                </mxCell>
+                <mxCell id="6" value="Сабмит задач (Slurm)&#xa;без ожидания" style="html=1;dashed=0;whiteSpace=wrap;shape=mxgraph.dfd.start;strokeColor=#001DBC;fillColor=#0050ef;fontColor=#ffffff;" parent="1" vertex="1">
+                    <mxGeometry x="140" y="280" width="260" height="60" as="geometry"/>
+                </mxCell>
+                <mxCell id="7" value="Записать SUBMITTED&#xa;(job_id, cmd)" style="html=1;dashed=0;whiteSpace=wrap;shape=mxgraph.dfd.start;strokeColor=#001DBC;fillColor=#0050ef;fontColor=#ffffff;" parent="1" vertex="1">
+                    <mxGeometry x="140" y="360" width="260" height="60" as="geometry"/>
+                </mxCell>
+                <mxCell id="8" value="Короткая пауза / следующий тик" style="html=1;dashed=0;whiteSpace=wrap;shape=mxgraph.dfd.start;strokeColor=#001DBC;fillColor=#0050ef;fontColor=#ffffff;" parent="1" vertex="1">
+                    <mxGeometry x="140" y="440" width="300" height="60" as="geometry"/>
+                </mxCell>
+                <mxCell id="9" style="edgeStyle=none;html=1;" parent="1" source="3" target="4" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="10" style="edgeStyle=none;html=1;" parent="1" source="4" target="5" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="11" style="edgeStyle=none;html=1;" parent="1" source="5" target="6" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="12" style="edgeStyle=none;html=1;" parent="1" source="6" target="7" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="13" style="edgeStyle=none;html=1;" parent="1" source="7" target="8" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+            </root>
+        </mxGraphModel>
+    </diagram>
+    <diagram id="gpt5_page_4" name="4. Проверка БД на необработанные образцы — внутренняя логика">
+        <mxGraphModel dx="2004" dy="1160" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="827" pageHeight="1169" math="0" shadow="0">
+            <root>
+                <mxCell id="0"/>
+                <mxCell id="1" parent="0"/>
+                <mxCell id="3" value="Запрос samples&#xa;status ∈ {READY, STABLE}" style="html=1;dashed=0;whiteSpace=wrap;shape=mxgraph.dfd.start;strokeColor=#001DBC;fillColor=#0050ef;fontColor=#ffffff;" parent="1" vertex="1">
+                    <mxGeometry x="120" y="40" width="300" height="60" as="geometry"/>
+                </mxCell>
+                <mxCell id="4" value="Фильтр по FileSubset&#xa;(fast5/pod5/fq, PASS)" style="html=1;dashed=0;whiteSpace=wrap;shape=mxgraph.dfd.start;strokeColor=#001DBC;fillColor=#0050ef;fontColor=#ffffff;" parent="1" vertex="1">
+                    <mxGeometry x="120" y="120" width="320" height="60" as="geometry"/>
+                </mxCell>
+                <mxCell id="5" value="Дебаунс / стабильный отпечаток&#xa;(no events T seconds)" style="html=1;dashed=0;whiteSpace=wrap;shape=mxgraph.dfd.start;strokeColor=#001DBC;fillColor=#0050ef;fontColor=#ffffff;" parent="1" vertex="1">
+                    <mxGeometry x="120" y="200" width="360" height="60" as="geometry"/>
+                </mxCell>
+                <mxCell id="6" value="Нужна курация?" style="shape=rhombus;whiteSpace=wrap;html=1;strokeColor=#001DBC;fillColor=#0050ef;fontColor=#ffffff;" parent="1" vertex="1">
+                    <mxGeometry x="160" y="300" width="220" height="100" as="geometry"/>
+                </mxCell>
+                <mxCell id="7" value="В curations&#xa;(пропустить)" style="html=1;dashed=0;whiteSpace=wrap;shape=mxgraph.dfd.start;strokeColor=#001DBC;fillColor=#0050ef;fontColor=#ffffff;" parent="1" vertex="1">
+                    <mxGeometry x="40" y="440" width="200" height="60" as="geometry"/>
+                </mxCell>
+                <mxCell id="8" value="В worklist на обработку" style="html=1;dashed=0;whiteSpace=wrap;shape=mxgraph.dfd.start;strokeColor=#001DBC;fillColor=#0050ef;fontColor=#ffffff;" parent="1" vertex="1">
+                    <mxGeometry x="340" y="440" width="240" height="60" as="geometry"/>
+                </mxCell>
+                <mxCell id="9" style="edgeStyle=none;html=1;" parent="1" source="3" target="4" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="10" style="edgeStyle=none;html=1;" parent="1" source="4" target="5" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="11" style="edgeStyle=none;html=1;" parent="1" source="5" target="6" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="12" value="Да" style="edgeStyle=none;html=1;" parent="1" source="6" target="7" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="13" value="Нет" style="edgeStyle=none;html=1;" parent="1" source="6" target="8" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+            </root>
+        </mxGraphModel>
+    </diagram>
+    <diagram id="gpt5_page_5" name="5. Обработка образцов — внутренняя логика">
+        <mxGraphModel dx="594" dy="708" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="827" pageHeight="1169" math="0" shadow="0">
+            <root>
+                <mxCell id="0"/>
+                <mxCell id="1" parent="0"/>
+                <mxCell id="3" value="Сформировать sbatch-скрипт&#xa;(позже: реальная команда)" style="html=1;dashed=0;whiteSpace=wrap;shape=mxgraph.dfd.start;strokeColor=#001DBC;fillColor=#0050ef;fontColor=#ffffff;" parent="1" vertex="1">
+                    <mxGeometry x="100" y="40" width="320" height="60" as="geometry"/>
+                </mxCell>
+                <mxCell id="4" value="Собрать команду sbatch&#xa;(--parsable, ресурсы)" style="html=1;dashed=0;whiteSpace=wrap;shape=mxgraph.dfd.start;strokeColor=#001DBC;fillColor=#0050ef;fontColor=#ffffff;" parent="1" vertex="1">
+                    <mxGeometry x="100" y="120" width="320" height="60" as="geometry"/>
+                </mxCell>
+                <mxCell id="5" value="subprocess.run(sbatch)&#xa;получить job_id" style="html=1;dashed=0;whiteSpace=wrap;shape=mxgraph.dfd.start;strokeColor=#001DBC;fillColor=#0050ef;fontColor=#ffffff;" parent="1" vertex="1">
+                    <mxGeometry x="100" y="200" width="320" height="60" as="geometry"/>
+                </mxCell>
+                <mxCell id="6" value="Успех сабмита?" style="shape=rhombus;whiteSpace=wrap;html=1;strokeColor=#001DBC;fillColor=#0050ef;fontColor=#ffffff;" parent="1" vertex="1">
+                    <mxGeometry x="160" y="280" width="220" height="100" as="geometry"/>
+                </mxCell>
+                <mxCell id="7" value="mark SUBMITTED&#xa;(job_id, cmd)" style="html=1;dashed=0;whiteSpace=wrap;shape=mxgraph.dfd.start;strokeColor=#001DBC;fillColor=#0050ef;fontColor=#ffffff;" parent="1" vertex="1">
+                    <mxGeometry x="40" y="420" width="240" height="60" as="geometry"/>
+                </mxCell>
+                <mxCell id="8" value="Лог ошибки&#xa;(код/строка stderr)" style="html=1;dashed=0;whiteSpace=wrap;shape=mxgraph.dfd.start;strokeColor=#001DBC;fillColor=#0050ef;fontColor=#ffffff;" parent="1" vertex="1">
+                    <mxGeometry x="330" y="420" width="260" height="60" as="geometry"/>
+                </mxCell>
+                <mxCell id="9" style="edgeStyle=none;html=1;" parent="1" source="3" target="4" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="10" style="edgeStyle=none;html=1;" parent="1" source="4" target="5" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="11" style="edgeStyle=none;html=1;" parent="1" source="5" target="6" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="12" value="Да" style="edgeStyle=none;html=1;" parent="1" source="6" target="7" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="13" value="Нет" style="edgeStyle=none;html=1;" parent="1" source="6" target="8" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+            </root>
+        </mxGraphModel>
+    </diagram>
+    <diagram id="gpt5_page_6" name="6. Запись результатов в БД — внутренняя логика">
+        <mxGraphModel dx="594" dy="708" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="827" pageHeight="1169" math="0" shadow="0">
+            <root>
+                <mxCell id="0"/>
+                <mxCell id="1" parent="0"/>
+                <mxCell id="3" value="Опрашивать Slurm&#xa;(squeue/sacct)" style="html=1;dashed=0;whiteSpace=wrap;shape=mxgraph.dfd.start;strokeColor=#001DBC;fillColor=#0050ef;fontColor=#ffffff;" parent="1" vertex="1">
+                    <mxGeometry x="120" y="40" width="280" height="60" as="geometry"/>
+                </mxCell>
+                <mxCell id="4" value="Парсить статусы&#xa;COMPLETED/FAILED/..." style="html=1;dashed=0;whiteSpace=wrap;shape=mxgraph.dfd.start;strokeColor=#001DBC;fillColor=#0050ef;fontColor=#ffffff;" parent="1" vertex="1">
+                    <mxGeometry x="120" y="120" width="320" height="60" as="geometry"/>
+                </mxCell>
+                <mxCell id="5" value="COMPLETED?" style="shape=rhombus;whiteSpace=wrap;html=1;strokeColor=#001DBC;fillColor=#0050ef;fontColor=#ffffff;" parent="1" vertex="1">
+                    <mxGeometry x="160" y="210" width="200" height="100" as="geometry"/>
+                </mxCell>
+                <mxCell id="6" value="Собрать метрики/артефакты&#xa;вставить в human" style="html=1;dashed=0;whiteSpace=wrap;shape=mxgraph.dfd.start;strokeColor=#001DBC;fillColor=#0050ef;fontColor=#ffffff;" parent="1" vertex="1">
+                    <mxGeometry x="20" y="340" width="300" height="60" as="geometry"/>
+                </mxCell>
+                <mxCell id="7" value="Обновить sample: DONE&#xa;+ updated_at" style="html=1;dashed=0;whiteSpace=wrap;shape=mxgraph.dfd.start;strokeColor=#001DBC;fillColor=#0050ef;fontColor=#ffffff;" parent="1" vertex="1">
+                    <mxGeometry x="40" y="420" width="260" height="60" as="geometry"/>
+                </mxCell>
+                <mxCell id="8" value="Сохранить stderr/stdout&#xa;код ошибки" style="html=1;dashed=0;whiteSpace=wrap;shape=mxgraph.dfd.start;strokeColor=#001DBC;fillColor=#0050ef;fontColor=#ffffff;" parent="1" vertex="1">
+                    <mxGeometry x="360" y="340" width="300" height="60" as="geometry"/>
+                </mxCell>
+                <mxCell id="9" value="Обновить sample: FAILED&#xa;(+ attempts)" style="html=1;dashed=0;whiteSpace=wrap;shape=mxgraph.dfd.start;strokeColor=#001DBC;fillColor=#0050ef;fontColor=#ffffff;" parent="1" vertex="1">
+                    <mxGeometry x="380" y="420" width="260" height="60" as="geometry"/>
+                </mxCell>
+                <mxCell id="10" style="edgeStyle=none;html=1;" parent="1" source="3" target="4" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="11" style="edgeStyle=none;html=1;" parent="1" source="4" target="5" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="12" value="Да" style="edgeStyle=none;html=1;" parent="1" source="5" target="6" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="13" style="edgeStyle=none;html=1;" parent="1" source="6" target="7" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="14" value="Нет" style="edgeStyle=none;html=1;" parent="1" source="5" target="8" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="15" style="edgeStyle=none;html=1;" parent="1" source="8" target="9" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+            </root>
+        </mxGraphModel>
+    </diagram>
+</mxfile>

@@ -1,0 +1,174 @@
+0:
+  model: dna_r10.4.1_e8.2_400bps_fast@v5.0.0
+  freq: '5000'
+  mod_data_versions:
+    ? ''
+    : ''
+1:
+  model: dna_r10.4.1_e8.2_400bps_hac@v5.0.0
+  freq: '5000'
+  mod_data_versions:
+    4mC_5mC: 3
+    5mCG_5hmCG: 3
+    5mC_5hmC: 3
+    6mA: 3
+2:
+  model: dna_r10.4.1_e8.2_400bps_sup@v5.0.0
+  freq: '5000'
+  mod_data_versions:
+    4mC_5mC: 3
+    5mCG_5hmCG: 3
+    5mC_5hmC: 3
+    6mA: 3
+3:
+  model: dna_r10.4.1_e8.2_400bps_fast@v4.3.0
+  freq: '5000'
+  mod_data_versions:
+    ? ''
+    : ''
+4:
+  model: dna_r10.4.1_e8.2_400bps_hac@v4.3.0
+  freq: '5000'
+  mod_data_versions:
+    5mCG_5hmCG: 1
+    5mC_5hmC: 1
+    6mA: 2
+5:
+  model: dna_r10.4.1_e8.2_400bps_sup@v4.3.0
+  freq: '5000'
+  mod_data_versions:
+    5mCG_5hmCG: 1
+    5mC_5hmC: 1
+    6mA: 2
+6:
+  model: dna_r10.4.1_e8.2_400bps_fast@v4.2.0
+  freq: '5000'
+  mod_data_versions:
+    5mCG_5hmCG: 2
+7:
+  model: dna_r10.4.1_e8.2_400bps_hac@v4.2.0
+  freq: '5000'
+  mod_data_versions:
+    5mCG_5hmCG: 2
+8:
+  model: dna_r10.4.1_e8.2_400bps_sup@v4.2.0
+  freq: '5000'
+  mod_data_versions:
+    5mCG_5hmCG: 3.1
+    5mC_5hmC: 1
+    5mC: 2
+    6mA: 3
+9:
+  model: dna_r10.4.1_e8.2_400bps_fast@v4.1.0
+  freq: '4000'
+  mod_data_versions:
+    5mCG_5hmCG: 2
+10:
+  model: dna_r10.4.1_e8.2_400bps_hac@v4.1.0
+  freq: '4000'
+  mod_data_versions:
+    5mCG_5hmCG: 2
+11:
+  model: dna_r10.4.1_e8.2_400bps_sup@v4.1.0
+  freq: '4000'
+  mod_data_versions:
+    5mCG_5hmCG: 2
+12:
+  model: dna_r10.4.1_e8.2_260bps_fast@v4.1.0
+  freq: '4000'
+  mod_data_versions:
+    5mCG_5hmCG: 2
+13:
+  model: dna_r10.4.1_e8.2_260bps_hac@v4.1.0
+  freq: '4000'
+  mod_data_versions:
+    5mCG_5hmCG: 2
+14:
+  model: dna_r10.4.1_e8.2_260bps_sup@v4.1.0
+  freq: '4000'
+  mod_data_versions:
+    5mCG_5hmCG: 2
+15:
+  model: dna_r10.4.1_e8.2_400bps_fast@v4.0.0
+  freq: '4000'
+  mod_data_versions:
+    5mCG_5hmCG: 2
+16:
+  model: dna_r10.4.1_e8.2_400bps_hac@v4.0.0
+  freq: '4000'
+  mod_data_versions:
+    5mCG_5hmCG: 2
+17:
+  model: dna_r10.4.1_e8.2_400bps_sup@v4.0.0
+  freq: '4000'
+  mod_data_versions:
+    5mCG_5hmCG: 2
+18:
+  model: dna_r10.4.1_e8.2_260bps_fast@v4.0.0
+  freq: '4000'
+  mod_data_versions:
+    5mCG_5hmCG: 2
+19:
+  model: dna_r10.4.1_e8.2_260bps_hac@v4.0.0
+  freq: '4000'
+  mod_data_versions:
+    5mCG_5hmCG: 2
+20:
+  model: dna_r10.4.1_e8.2_260bps_sup@v4.0.0
+  freq: '4000'
+  mod_data_versions:
+    5mCG_5hmCG: 2
+21:
+  model: dna_r10.4.1_e8.2_260bps_fast@v3.5.2
+  freq: '4000'
+  mod_data_versions:
+    5mCG: 2
+22:
+  model: dna_r10.4.1_e8.2_260bps_hac@v3.5.2
+  freq: '4000'
+  mod_data_versions:
+    5mCG: 2
+23:
+  model: dna_r10.4.1_e8.2_260bps_sup@v3.5.2
+  freq: '4000'
+  mod_data_versions:
+    5mCG: 2
+24:
+  model: dna_r10.4.1_e8.2_400bps_fast@v3.5.2
+  freq: '4000'
+  mod_data_versions:
+    5mCG: 2
+25:
+  model: dna_r10.4.1_e8.2_400bps_hac@v3.5.2
+  freq: '4000'
+  mod_data_versions:
+    5mCG: 2
+26:
+  model: dna_r10.4.1_e8.2_400bps_sup@v3.5.2
+  freq: '4000'
+  mod_data_versions:
+    5mCG: 2
+27:
+  model: dna_r9.4.1_e8_sup@v3.6
+  freq: '4000'
+  mod_data_versions:
+    ? ''
+    : ''
+28:
+  model: dna_r9.4.1_e8_fast@v3.4
+  freq: '4000'
+  mod_data_versions:
+    5mCG_5hmCG: 0
+    5mCG: 0.1
+29:
+  model: dna_r9.4.1_e8_hac@v3.3
+  freq: '4000'
+  mod_data_versions:
+    5mCG_5hmCG: 0
+    5mCG: 0.1
+30:
+  model: dna_r9.4.1_e8_sup@v3.3
+  freq: '4000'
+  mod_data_versions:
+    5mCG_5hmCG: 0
+    5mCG: 0.1

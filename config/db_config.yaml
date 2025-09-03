@@ -1,0 +1,59 @@
+# Конфиг БД для DAO: коллекции и их индексы.
+# Направления: ASC/DESC. Доп. опции (unique/sparse/partialFilterExpression) — по месту.
+collections:
+  files:
+    indexes:
+      - name: uq_path_abs
+        unique: true
+        keys: [["path", "ASC"]]
+      - name: ix_batch_sample
+        keys: [["batch", "ASC"], ["sample", "ASC"]]
+      - name: ix_stat_dev_ino
+        keys: [["dev", "ASC"], ["ino", "ASC"]]
+
+  directories:
+    indexes:
+      - name: dir_path_abs
+        unique: true
+        keys: [["path_", "ASC"]]
+
+  batches:
+    indexes:
+      - name: uq_name
+        unique: true
+        keys: [["name", "ASC"]]
+      - name: ix_curation
+        keys: [["needs_curation", "ASC"]]
+      - name: ix_status
+        keys: [["status", "ASC"]]
+      - name: ix_updated_at
+        keys: [["updated_at", "DESC"]]
+
+  samples:
+    indexes:
+      - name: uq_batch_sample
+        unique: true
+        keys: [["batch", "ASC"], ["sample", "ASC"]]
+      - name: ix_status
+        keys: [["status", "ASC"]]
+      - name: ix_curation
+        keys: [["needs_curation", "ASC"]]
+      - name: ix_updated_at
+        keys: [["modified", "DESC"]]
+
+  curations:
+    indexes:
+      - name: uq_batch_sample
+        unique: true
+        keys: [["batch", "ASC"], ["sample", "ASC"]]
+      - name: ix_first_appearance
+        keys: [["first_appearance", "DESC"]]
+      - name: ix_last_seen
+        keys: [["last_seen", "DESC"]]
+
+  human:
+    indexes:
+      - name: ix_sample
+        keys: [["sample", "ASC"]]
+      - name: ix_created_at
+        keys: [["created_at", "DESC"]]
