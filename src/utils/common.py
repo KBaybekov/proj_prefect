@@ -1,14 +1,13 @@
-import logging
-from typing import Optional, Type
+from typing import Optional
 import os
 import subprocess
 import time
 from datetime import datetime
-import yaml
+from yaml import dump, safe_load, YAMLError
 from pathlib import Path
+from utils.logger import get_logger
 
-
-logger = logging.getLogger(__name__)  # наследует конфиг из watchdog.py
+logger = get_logger(name=__name__)
 
 
 def env_var(var:str) -> str:
@@ -20,13 +19,8 @@ def env_var(var:str) -> str:
     """
     val = os.getenv(var)
     if val == None:
-        log_error(error_type=ValueError, error_message=f"Env var {var} not set")
+        print(f"Env var {var} not set")
     return str(val)
-
-
-def log_error(error_type:Type[BaseException], error_message:str) -> None:
-    logger.error(error_message)
-    raise error_type
 
 
 def run_shell_cmd(cmd:str, timeout:int=0, debug:str='') -> dict:
@@ -201,8 +195,10 @@ def convert_secs_to_dhms(secs:int, precision:str='s') -> str:
         time_str = (f'< 1{precision}')
     return time_str
 
+
 def max_datetime(a: Optional[datetime], b: Optional[datetime]) -> Optional[datetime]:
     return b if a is None or (b and b > a) else a
+
 
 def min_datetime(a: Optional[datetime], b: Optional[datetime]) -> Optional[datetime]:
     return b if a is None or (b and b < a) else a
@@ -227,37 +223,42 @@ def load_yaml(
     :return: Возвращает словарь с данными из YAML-файла. Если указан параметр subsection и он присутствует
              в YAML, возвращается соответствующая секция, иначе — всё содержимое файла.
     """
-    error: type[BaseException]
-    error_msg: str = ''
+
     data: dict = {}
     # Открываем YAML-файл для чтения
     try:
-        data = yaml.safe_load(file_path.read_text(encoding=encoding)) or {}  # Загружаем содержимое файла в словарь с помощью safe_load
+        data = safe_load(file_path.read_text(encoding=encoding)) or {}  # Загружаем содержимое файла в словарь с помощью safe_load
         if subsection:
             try:
                 data = data[subsection]
             except KeyError:
-                error = KeyError
-                error_msg = f"Раздел '{subsection}' не найден в {file_path}"
-    except UnicodeDecodeError as e:
-        error = UnicodeDecodeError
-        error_msg = f"Ошибка кодировки файла: {e}. Проверьте кодировку: {file_path}."
-    except yaml.YAMLError as e:
-        error = yaml.YAMLError
-        error_msg = f"Ошибка парсинга YAML файла:\n{e}"
+                logger.error(f"Раздел '{subsection}' не найден в {file_path}")
+                if critical:
+                    raise KeyError
+    except UnicodeDecodeError:
+        logger.error(f"Ошибка кодировки файла. Проверьте кодировку: {file_path}.")
+        if critical:
+            raise UnicodeDecodeError # type: ignore
+    except YAMLError:
+        logger.error(f"Ошибка парсинга YAML файла: {file_path}")
+        if critical:
+            raise YAMLError
     except FileNotFoundError:
-        error = FileNotFoundError
-        error_msg = f"Файл не найден: {file_path}"
+        logger.error(f"Файл не найден: {file_path}")
+        if critical:
+            raise FileNotFoundError
     except Exception as e:
-        error = Exception
-        error_msg = f"Ошибка при открытии YAML файла: {e}"
-    finally:
-        if error_msg:
-            data = {}
-            if critical:
-                log_error(error, error_message=error_msg) # type: ignore
-        return data
-    
+        logger.error(f"Ошибка при открытии YAML файла {file_path}:\n%s",
+                     e, exc_info=True)
+        if critical:
+            logger.critical(f"Фатальная ошибка при парсинге YAML {file_path}:\n%s", e, exc_info=True)
+            raise e
+    if data:
+        logger.debug(f"Загружены данные из YAML {file_path}")
+    else:
+        logger.debug(f"Пустой словарь из YAML {file_path}")
+    return data
+  
 
 def save_yaml(filename:str, path:str, data:dict) -> str:
     """
@@ -273,30 +274,5 @@ def save_yaml(filename:str, path:str, data:dict) -> str:
 
     # Записываем данные в YAML-файл
     with open(file_path, 'w') as yaml_file:
-        yaml.dump(data, yaml_file, default_flow_style=False, sort_keys=False)
+        dump(data, yaml_file, default_flow_style=False, sort_keys=False)
     return file_path
-
-
-def update_yaml(file_path: str, new_data: dict):
-    """
-    Обновляет YAML-файл, считывая и перезаписывая его новыми данными
-    :param file_path: путь к файлу в виде строки
-    :param new_data: данные в виде словаря
-    """
-    # Шаг 1: Загрузить текущие данные из YAML
-    try:
-        with open(file_path, 'r') as file:
-            current_data = yaml.safe_load(file) or {}
-    except FileNotFoundError:
-        current_data = {}  # Если файл не найден, создаём пустой словарь
-
-    # Шаг 2: Обновить значения существующих ключей
-    for key, value in new_data.items():
-        if key in current_data:
-            current_data[key].update(value)  # Обновляем только значения
-        else:
-            current_data[key] = value  # Добавляем новый ключ, если его нет
-
-    # Шаг 3: Записать обновлённые данные обратно в YAML
-    with open(file_path, 'w') as file:
-        yaml.dump(current_data, file, default_flow_style=False)

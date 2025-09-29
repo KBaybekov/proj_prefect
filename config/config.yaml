@@ -1,0 +1,19 @@
+log: "./logs/watchdog.log"
+
+# DB INFO
+db_config_path: "config/db_config.yaml"
+db_host: "vu10-2-002"
+db_name: "nanopore"
+db_user: "guest"
+db_password: "guest"
+db_timeout: "100"
+
+# FILESYSTEM INFO
+source_dir: "/common_share/github/proj_prefect/test/data/raw/"
+link_dir: "/common_share/github/proj_prefect/test/data/links/"
+result_dir: "/common_share/github/proj_prefect/test/data/result/"
+tmp_dir: "/common_share/github/proj_prefect/test/data/tmp/"
+source_files_extensions: "fast5,pod5,fastq.gz"
+
+# WATCHER INFO
+watchdog_debounce: 10

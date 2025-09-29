@@ -1,41 +1,42 @@
 import hashlib, json
 from pathlib import Path
-from utils.filesystem import load_yaml  # ваш loader
+from utils.common import load_yaml
+from typing import List
+from utils.logger import get_logger
+
+logger = get_logger(name=__name__)
 
 class RefStore:
     def __init__(self, paths: dict[str, Path]):
-        self.paths = paths
+        self.paths: dict[str, Path] = paths
         self.cache: dict[str, dict] = {}
         self.mtime: dict[str, float] = {}
-        self.version = ""
+        self.versions: dict[str, str] = {}
 
-    def _calc_version(self) -> str:
+    def _calc_version(self, key:str) -> str:
         h = hashlib.blake2s()
-        for k in sorted(self.cache):
-            h.update(k.encode()); h.update(b'|')
-            h.update(json.dumps(self.cache[k], sort_keys=True).encode()); h.update(b'\n')
+        h.update(key.encode()); h.update(b'|')
+        h.update(json.dumps(self.cache[key], sort_keys=True).encode()); h.update(b'|')
         return h.hexdigest()
 
-    def get(self) -> tuple[dict, dict, dict, str]:
-        reloaded = False
+    def get(self) -> List[dict]:
         for key, p in self.paths.items():
+            reloaded = False
             mt = p.stat().st_mtime
             if self.mtime.get(key) != mt:
-                self.cache[key] = load_yaml(str(p), critical=True)
+                self.cache[key] = load_yaml(p, critical=True)
                 self.mtime[key] = mt
                 reloaded = True
-        if reloaded:
-            self.version = self._calc_version()
-        return (
-            self.cache.get('pore_data', {}),
-            self.cache.get('models', {}),
-            self.cache.get('available_modifications', {}),
-            self.version,
-        )
-
+            if reloaded:
+                self.versions[key] = self._calc_version(key)
+        data = [self.versions]
+        data.extend([v for v in self.cache.values()])
+        return data
+                
 # инициализация (один раз)
-REFS = RefStore({
-    'pore_data': Path('data/pores_n_chemistry.yaml'),
-    'models': Path('data/dorado_models.yaml'),
-    'available_modifications': Path('data/available_modifications.yaml'),
-})
+ref_dicts = {k:Path(v) for k,v in
+             load_yaml(Path('config/reference_files.yaml'),
+                       critical=True).items()}
+REFS = RefStore(ref_dicts)
+
+    
