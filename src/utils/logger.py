@@ -5,9 +5,9 @@
 from __future__ import annotations
 from logging import getLogger, Formatter, FileHandler, StreamHandler, INFO, DEBUG
 from pathlib import Path
-from utils.common import env_var
+from yaml import safe_load
 
-log_file = env_var("LOG")
+log_file = safe_load(Path('/common_share/github/proj_prefect/config/config.yaml').read_text())['log']
 
 fmt = Formatter(
         fmt="%(asctime)s | %(levelname)-8s | %(name)s | %(funcName)s:%(lineno)d | %(message)s",

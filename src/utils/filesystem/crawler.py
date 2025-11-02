@@ -21,6 +21,10 @@ from pathlib import Path
 from pymongo.collection import Collection
 from watchdog.observers import Observer
 from watchdog.events import (
+                             DirCreatedEvent,
+                             DirDeletedEvent,
+                             DirModifiedEvent,
+                             DirMovedEvent,
                              PatternMatchingEventHandler,
                              FileCreatedEvent,
                              FileModifiedEvent,
@@ -28,22 +32,16 @@ from watchdog.events import (
                              FileDeletedEvent
                             )
 
-from utils.db import ConfigurableMongoDAO
-
+from utils.db.db import ConfigurableMongoDAO
 from utils.filesystem.metas import (
-                            BatchMeta,
-                            SampleMeta,
-                            SourceFileMeta,
-                            FileSet,
-                            FileSubset,
-                            FileGroup
-                           )
-# from utils.filesystem import ()
+                                    BatchMeta,
+                                    SampleMeta,
+                                    SourceFileMeta
+                                   )
+from utils.refs import REFS
 from utils.logger import get_logger
 
-
 logger = get_logger(__name__)
-
 
 class FsWatcher(PatternMatchingEventHandler):
     """
@@ -54,10 +52,7 @@ class FsWatcher(PatternMatchingEventHandler):
                  crawler:FsCrawler,
                  patterns: List[str],
                  ignore_directories: bool,
-                 case_sensitive: bool,
-                 dao:ConfigurableMongoDAO,
-                 main_symlink_dir:Path,
-                 debounce: int
+                 case_sensitive: bool
                 ):
         super().__init__(
                          patterns=patterns,
@@ -65,86 +60,38 @@ class FsWatcher(PatternMatchingEventHandler):
                          case_sensitive=case_sensitive
                         )
         self.crawler:FsCrawler = crawler
-        self.debounce_time:int = debounce
-        self.dao:ConfigurableMongoDAO = dao
-        self.main_symlink_dir:Path = main_symlink_dir
-        self.unique_file_properties = crawler.unique_file_properties
-
-    '''def on_created(self, event:FileCreatedEvent, *, meta_prepared:bool=False) -> None: # type: ignore
-        if meta_prepared:
-            # Данный блок исполняется при первичной индексации файлов
-            # Действия по изменению меты батча и образца выполняются в index_files()
-            logger.debug(f"Файл {event.src_path} создан, выполнена первичная индексация")
-        else:
-            # Обработка новых файлов, созданных в реальном времени            
-            resolved_path = Path(str(event.src_path)).resolve()
-            try:
-                # Ищем расширения, указанные в конфиге
-                file_extension = next(
-                                    f[1:] for f in resolved_path.suffixes
-                                    if f"*{f}" in self.patterns # type: ignore
-                                    )
-            except StopIteration:
-                logger.error(f"Неизвестный тип файла {event.src_path}")
-                return None
-            target_filetype_dir = self.main_symlink_dir / file_extension
-
-            def process_file():
-                try:
-                    # Проверяем, что файл всё ещё существует
-                    if not resolved_path.exists():
-                        logger.warning(f"Файл {resolved_path} исчез до завершения обработки")
-                        return
-
-                    # Создаём метаданные файла
-                    meta = SourceFileMeta(
-                        filepath=resolved_path,
-                        symlink_dir=target_filetype_dir
-                    )
-
-                    # Создаём симлинк, если его ещё нет
-                    if not meta.symlink.exists():
-                        os.symlink(meta.filepath, meta.symlink)
-
-                    # Вызываем обработку с meta_prepared=True
-                    self.on_created(event, meta_prepared=True)
-                except Exception as e:
-                    logger.error(f"Ошибка при обработке созданного файла {resolved_path}: {e}")
-
-            # Запускаем debounce
-            timer = threading.Timer(self.debounce_time, process_file)
-            timer.start()
-        return None
-
-    def on_modified(self, event:FileModifiedEvent, *, old_file_fingerprint:Optional[str]) -> None: # type: ignore
-        self.dao.update_one(
-                            collection="files",
-                            key={"fingerprint":old_file_fingerprint}, # type: ignore
-                            doc={"status":"deprecated"}
-                           )
-        logger.debug(f"Файл {event.src_path} изменён, статус deprecated установлен для {old_file_fingerprint}")
+        
+    def on_created(self, event: DirCreatedEvent | FileCreatedEvent) -> None:
+        if isinstance(event, DirCreatedEvent):
+            logger.debug(f"Watchdog: {type(event)}. Путь: {event.src_path}")
+        elif isinstance(event, FileCreatedEvent):
+            logger.debug(f"Watchdog: {type(event)}. Путь: {event.src_path}")
+            self.handle_file_event(event)
         return None
     
-    def on_moved(self, event:FileMovedEvent, *, symlink:Optional[Path]) -> None: # type: ignore
-        """
-        Обработка события перемещения файла        
-        """
-        # Обновляем в базе данных информацию о файле
-        self.dao.update_one(
-                        collection="files",
-                        key={"filepath":event.src_path},
-                        doc={"filepath":event.dest_path}
-                       )
-        # Создаём новый симлинк на файл
-        replace_symlink_source(
-                                symlink=symlink, # type: ignore
-                                new_source=Path(event.dest_path) # type: ignore
-                                )
-        logger.debug(f"Файл {event.src_path} перемещён в {event.dest_path}")
+    def on_moved(self, event: DirMovedEvent | FileMovedEvent) -> None:
+        if isinstance(event, DirMovedEvent):
+            logger.debug(f"Watchdog: {type(event)}. Путь: {event.src_path}")
+        elif isinstance(event, FileMovedEvent):
+            logger.debug(f"Watchdog: {type(event)}. Путь: {event.src_path}")
+            self.handle_file_event(event)
         return None
     
-    def on_deleted(self, event) -> None:
-        return None'''
+    def on_modified(self, event: DirModifiedEvent | FileModifiedEvent) -> None:
+        if isinstance(event, DirModifiedEvent):
+            logger.debug(f"Watchdog: {type(event)}. Путь: {event.src_path}")
+        elif isinstance(event, FileModifiedEvent):
+            logger.debug(f"Watchdog: {type(event)}. Путь: {event.src_path}")
+            self.handle_file_event(event)
+        return None
+    
+    def on_deleted(self, event: DirDeletedEvent | FileDeletedEvent) -> None:
+        if isinstance(event, DirDeletedEvent):
+            logger.debug(f"Watchdog: {type(event)}. Путь: {event.src_path}")
+        elif isinstance(event, FileDeletedEvent):
+            logger.debug(f"Watchdog: {type(event)}. Путь: {event.src_path}")
+            self.handle_file_event(event)
+        return None
     
     def handle_file_event(self,
                           event:Union[
@@ -155,12 +102,78 @@ class FsWatcher(PatternMatchingEventHandler):
                                      ],
                                      **kwargs
                          ) -> None:
+
+        def _is_file_moved(
+                           db_meta:Dict[str, datetime | str | int | None],
+                           meta_file:SourceFileMeta
+                          ) -> bool:
+            """
+            Сравнивает пути к файлу в БД и в ФС
+
+            :param db_meta: метаданные файла в БД
+            :param meta_file: метаданные файла в ФС
+            :return: True, если пути разные
+            """
+            if meta_file.filepath != db_meta['filepath']:
+                logger.debug(f"Файл {meta_file.name} был ранее перемещён.")
+                return True
+            return False
+        
         """Обработка события файла"""
-        logger.debug(f"Событие: {type(event)}. Путь: {event.src_path}")
+        logger.debug(f"Watchdog: {type(event)}. Путь: {event.src_path}")
         try:
+            # Действия при обнаружении события с файлами summary
+            if str(event.src_path).endswith(".txt"):
+                def __define_summary_type(
+                                          file:Path
+                                         ) -> str:
+                    """
+                    Определение типа файла summary по присутствию в имени файла.
+                    Если тэг не найден, возвращается пустая строка
+                    """
+                    for summary_type in self.crawler.summaries.keys():
+                        if summary_type in file.name:
+                            return summary_type
+                    return ""
+                
+                def __add_summary_2_collection(
+                                               file:Path,
+                                               summary_type:str
+                                              ) -> None:
+                    if file not in self.crawler.summaries[summary_type]:
+                        self.crawler.summaries[summary_type].add(file)
+                    return None
+                
+                def __remove_summary_from_collection(
+                                                     file:Path,
+                                                     summary_type:str
+                                                    ) -> None:
+                    if file in self.crawler.summaries[summary_type]:
+                        self.crawler.summaries[summary_type].remove(file)
+                    return None
+                
+                src_summary = Path(str(event.src_path)).resolve()
+                summary_type = __define_summary_type(src_summary)
+                # Если тип summary не определён, то пропускаем его - это какой-то файл, который не должен попадать в summary
+                if summary_type:
+                    if isinstance(event, FileCreatedEvent):
+                        __add_summary_2_collection(src_summary, summary_type)
+                        return None
+                    # При изменении summary надо бы что-то сделать. Но на данный момент (15.10.2025) непонятно, что именно.
+                    elif isinstance(event, FileModifiedEvent):
+                        return None
+                    elif isinstance(event, FileMovedEvent):
+                        dst_summary = Path(str(event.dest_path)).resolve()
+                        __remove_summary_from_collection(src_summary, summary_type)
+                        __add_summary_2_collection(dst_summary, summary_type)
+                        return None
+                    elif isinstance(event, FileDeletedEvent):
+                        __remove_summary_from_collection(src_summary, summary_type)
+                        return None
+
             # Действия при создании файла
             if isinstance(event, FileCreatedEvent):
-                def _create_meta_n_symlink(
+                def __create_meta_n_symlink(
                                            filepath:Path,
                                            symlink_dir:Path
                                            ) -> Tuple[SourceFileMeta, str]:
@@ -173,47 +186,19 @@ class FsWatcher(PatternMatchingEventHandler):
                     """
                     # Создаём метаданные файла
                     meta_file = SourceFileMeta(
-                                            filepath=resolved_path,
-                                            symlink_dir=target_filetype_dir
+                                            filepath=filepath,
+                                            symlink_dir=symlink_dir
                                             )
                     meta_id = meta_file.symlink.as_posix()
                     # Создаём ссылку, если она отсутствует в папке для ссылок
                     if not meta_file.symlink.exists():
                         os.symlink(resolved_path, meta_file.symlink)
                     return meta_file, meta_id
-                
-                def _are_metas_similar(
-                                       db_meta:Dict[str, datetime | str | int | None],
-                                       meta_file:SourceFileMeta
-                                      ) -> Tuple[bool, SourceFileMeta]:
-                    """
-                    Сравнивает метаданные файла с метаданными в БД. Создаёт новый симлинк, если файл был перемещён.
-                    Финализирует метаданные файла, если они отличаются от метаданных в БД
 
-                    :param db_meta: метаданные файла в БД
-                    :param meta_file: метаданные файла в ФС
-                    :return: True, если метаданные совпали, иначе False
-                    """
-                    def _is_file_moved(
-                                       db_meta:Dict[str, datetime | str | int | None],
-                                       meta_file:SourceFileMeta
-                                      ) -> bool:
-                        """
-                        Сравнивает пути к файлу в БД и в ФС
-
-                        :param db_meta: метаданные файла в БД
-                        :param meta_file: метаданные файла в ФС
-                        :return: True, если пути разные
-                        """
-                        if meta_file.filepath != db_meta['filepath']:
-                            logger.debug(f"Файл {meta_file.name} был ранее перемещён.")
-                            return True
-                        return False
-
-                    def _is_file_meta_the_same(
-                                               db_meta:Dict[str, datetime | str | int | None],
-                                               meta_file:SourceFileMeta
-                                              ) -> bool:
+                def __is_file_meta_the_same(
+                                            db_meta:Dict[str, datetime | str | int | None],
+                                            meta_file:SourceFileMeta
+                                           ) -> bool:
                         """
                         Сличает отпечатки новой меты с отпечатком из БД
 
@@ -227,7 +212,29 @@ class FsWatcher(PatternMatchingEventHandler):
                             logger.debug(f"Файл {meta_file.name} интактен.")
                             return True
                         return False
-                    
+
+                db_meta:Dict[str, datetime | str | int | None]
+
+                resolved_path = Path(str(event.src_path)).resolve()
+                # Генерируем путь к директории, в которую будет создан симлинк, если он не указан в kwargs
+                target_filetype_dir = kwargs.get(
+                                                 "target_filetype_dir",
+                                                 self.define_symlink_folder(filepath=resolved_path)
+                                                )
+                # Создаём базовую мету    
+                meta_file, meta_id = __create_meta_n_symlink(resolved_path, target_filetype_dir)
+                # Ищем файл в БД
+                db_files: Dict[str, Dict[str, datetime | str | int | None]] = self.crawler.db_files
+                # В случае первичной индексации...
+                if db_files:
+                    # Вытаскиваем метаданные из коллекции загруженных данных, попутно их удаляя из коллекции
+                    db_meta = db_files.pop(meta_id, {})
+                # ...и при нахождении файла в процессе мониторинга
+                else:
+                    db_meta = self.crawler._extract_file_info_from_db('symlink', meta_id) # type: ignore
+                # Действия при обнаружении файла в БД...
+                if db_meta:
+
                     # ...проверяем, что файл не был перемещён...
                     if _is_file_moved(
                                       db_meta=db_meta,
@@ -240,189 +247,232 @@ class FsWatcher(PatternMatchingEventHandler):
                                                is_synthetic=False
                                               )
                         self.handle_file_event(event, symlink=meta_file.symlink)
-                    # ...и не изменено его содержимое
-                    if _is_file_meta_the_same(
-                                              db_meta=db_meta,
-                                              meta_file=meta_file
-                                             ):
-                        return True, meta_file
-                    else:
-                        meta_file.finalize()
-                        return False, meta_file
-
-                def _collect_file_changes(
-                                          db_meta:Dict[str, datetime | str | int | None],
-                                          meta_file:SourceFileMeta
-                                         ) -> Dict[str, List[int | datetime]]:
-                    logger.debug(f"Поиск изменений в файле {meta_file.name}:")
-                    changed_properties = {}
-                    for prop in self.unique_file_properties:
-                        old_prop = db_meta[prop]
-                        new_prop = getattr(meta_file, prop)
-                        if new_prop != old_prop:
-                            changed_properties[prop] = [old_prop, new_prop]
-                            logger.debug(f"  {prop}: {str(old_prop)} => {str(new_prop)}")
-                    if not changed_properties:
-                        logger.error(f"Неизвестная причина изменения отпечатка файла {meta_file.name}:\n\
-                            {db_meta['fingerprint']} => {meta_file.fingerprint}")
-                    changed_properties["fingerprint"] = [db_meta['fingerprint'], meta_file.fingerprint]
-                    return changed_properties
-                
-                found_during_init = kwargs.get("found_during_init", False)
-                resolved_path = Path(str(event.src_path)).resolve()
-
-                # Данный блок исполняется при первичной индексации файлов
-                if found_during_init:
-                    logger.debug(f"Файл обнаружен: {event.src_path}")
-                    filetype = kwargs.get("filetype", "")
-                    
-                    # Генерируем путь к директории, в которую будет создан симлинк, если он не указан в kwargs
-                    target_filetype_dir = kwargs.get("target_filetype_dir", Path())
-                    meta_file, meta_id = _create_meta_n_symlink(resolved_path, target_filetype_dir)
-                    # Ищем данные о файле в БД, если нам не передан словарь с этими данными
-                    db_files: Dict[str, Dict[str, datetime | str | int | None]] = kwargs.get("db_files", {})
-                    db_meta:Dict[str, datetime | str | int | None] = db_files.get(meta_id, {})
-                    # действия при наличии метаданных файла в БД (поиск - по симлинку)
-                    if db_meta:
-                        # Сличаем метаданные файла с метаданными в БД:
-                        meta_is_same, meta_file = _are_metas_similar(
-                                                                     db_meta=db_meta,
-                                                                     meta_file=meta_file
-                                                                    )
-                        if meta_is_same:
-                            return None
-                        else:
-                            changed_properties = _collect_file_changes(
-                                                                       db_meta=db_meta,
-                                                                       meta_file=meta_file
-                                                                      )
-                            if changed_properties:
-                                # Создаём событие об изменении файла
-                                event = FileModifiedEvent(
-                                                          src_path=meta_file.filepath.as_posix(),
-                                                          dest_path= '',
-                                                          is_synthetic=False
-                                                         )
-                                self.handle_file_event(event,
-                                                       changed_properties=changed_properties,
-                                                       found_during_init=found_during_init,
-                                                       meta_id=meta_id,
-                                                       db_meta=db_meta,
-                                                       meta_file=meta_file
-                                                      )
-                                return None
-                            else:
-                                return None
-                           
-                # Действия при мониторинге ФС
-                else:
-                    try:
-                        filetype = next(
-                                        f[1:] for f in resolved_path.suffixes
-                                        if f"*{f}" in self.patterns # type: ignore
-                                       )
-                    except StopIteration:
-                        logger.error(f"Неизвестный тип файла {event.src_path}")
+                    # ...и не изменено ли его содержимое
+                    if __is_file_meta_the_same(
+                                               db_meta=db_meta,
+                                               meta_file=meta_file
+                                              ):
                         return None
-                    target_filetype_dir = self.main_symlink_dir / filetype
-                    meta_file, meta_id = _create_meta_n_symlink(resolved_path, target_filetype_dir)
-                    db_meta = self.dao.find_one(
-                                                collection='files',
-                                                query={
-                                                       'symlink':meta_id,
-                                                       'status':{"$nin":["deprecated", "deleted"]}
-                                                      },
-                                                projection={
-                                                            '_id':0,
-                                                            'symlink':1,
-                                                            **{prop:1 for prop in self.unique_file_properties}
-                                                           }
-                                               ) # type: ignore
-                        
+                    else:
+                        # Создаём событие об изменении файла
+                        event = FileModifiedEvent(
+                                                  src_path=meta_file.filepath.as_posix(),
+                                                  dest_path= '',
+                                                  is_synthetic=False
+                                                 )
+                        self.handle_file_event(
+                                               event,
+                                               meta_id=meta_id,
+                                               db_meta=db_meta,
+                                               meta_file=meta_file,
+                                               found_during_init=kwargs.get("found_during_init", False)
+                                              )
+                        return None
 
-
-
-
-
-
-
-
-
-                logger.debug(f"Создан файл: {event.src_path}")
+                # ...и впервые
+                else:
+                    meta_file.finalize()
+                    self.crawler.update_batch_metadata(
+                                                       meta_file=meta_file,
+                                                       update_type="add"
+                                                      )
+                    
+                    return None
             
             # действия при изменении файла
             elif isinstance(event, FileModifiedEvent):
-                def _apply_modifications(
-                                         db_meta:Dict[str, datetime | str | int | None],
-                                         meta_file:SourceFileMeta,
-                                         meta_id:str,
-                                         changed_properties:Dict[str, List[int | datetime]],
-                                         found_during_init:bool
-                                        ) -> None:
-                    if found_during_init:
-                        # Записываем изменения в Crawler
+                def __register_file_changes(
+                                            db_meta:Dict[str, datetime | str | int | None],
+                                            meta_file:SourceFileMeta,
+                                            meta_id:str
+                                           ) -> None:
+                    
+                    def ___extract_file_changes(
+                                                props2check:List[str],
+                                                db_meta:Dict[str, datetime | str | int | None],
+                                                meta_file:SourceFileMeta
+                                               ) -> Dict[str, List[str|int|datetime]]:
+                        changed_properties = {}
+                        for prop in props2check:
+                            old_prop = db_meta[prop]
+                            new_prop = getattr(meta_file, prop)
+                            if new_prop != old_prop:
+                                changed_properties[prop] = [old_prop, new_prop]
+                                logger.debug(f"  {prop}: {str(old_prop)} => {str(new_prop)}")
+                        if changed_properties:
+                            changed_properties["fingerprint"] = [db_meta['fingerprint'], meta_file.fingerprint]
+                        else:
+                            logger.error(f"  Неизвестная причина изменения отпечатка файла {meta_file.name}:\n\
+                                {db_meta['fingerprint']} => {meta_file.fingerprint}")
+                        return changed_properties
 
-                    else:
-                        pass
+                    def ___write_changes_to_meta_log(
+                                                     meta_file:SourceFileMeta,
+                                                     changed_properties:Dict[str, List[str|int|datetime]]
+                                                    ) -> SourceFileMeta:
+                        """
+                        Записывает изменения в лог метаданных файла
+                        """
+                        for prop, diffs in changed_properties.items():
+                            if prop != "fingerprint":
+                                new_prop = diffs[1]
+                                meta_file.changes[prop] = new_prop # type: ignore
+                        meta_file.previous_version = changed_properties["fingerprint"][0] # type: ignore
+                        return meta_file        
 
-                def _write_changes_to_meta_log(
-                                               meta_file:SourceFileMeta,
-                                               changed_properties:Dict[str, List[int | datetime]],
-                                               old_fingerprint:str = ""
-                                              ) -> SourceFileMeta:
-                    """
-                    Записывает изменения в лог метаданных файла
-                    """
-                    for prop, diffs in changed_properties.items():
-                        new_prop = diffs[1]
-                        meta_file.changes[prop] = new_prop
-                    meta_file.previous_version = old_fingerprint
-                    return meta_file
+                    logger.debug(f"Поиск изменений в файле {meta_file.name}:")
+                    meta_file.finalize()
+                    # Ищем изменения в файле, касающиеся его содержимого
+                    props2check = [prop for prop in self.crawler.unique_file_properties if prop != 'filepath']
+                    changed_properties = ___extract_file_changes(
+                                                                 props2check,
+                                                                 db_meta,
+                                                                 meta_file
+                                                                )
+                    if changed_properties:
+                        meta_file = ___write_changes_to_meta_log(
+                                                                 meta_file,
+                                                                 changed_properties
+                                                                )
+                        self.crawler.file_diffs[meta_id] = changed_properties
+                        self.crawler.new_indexed_files[meta_id] = meta_file
+                        self.crawler.update_batch_metadata(
+                                                           meta_file=meta_file,
+                                                           update_type="modify",
+                                                          )
+                        logger.debug(f"Изменения в файле {meta_id} записаны")
 
                 logger.debug(f"Файл {event.src_path} был изменён.")
-                changed_properties:Dict[str, List[int | datetime]] = kwargs.get("changed_properties", {})
-                meta_file: SourceFileMeta = kwargs.get("meta_file", SourceFileMeta)
-                meta_id:str = kwargs.get("meta_id", "")
-                db_meta:Dict[str, datetime | str | int | None] = kwargs.get("db_meta", {})
-
-                updated_meta_file = _write_changes_to_meta_log(
-                                                               meta_file=meta_file,
-                                                               changed_properties=changed_properties
-                                                              ) 
-                # индикатор процесса первичной индексации, при котором используется групповая запись изменений в БД
                 found_during_init = kwargs.get("found_during_init", False)
-                self.crawler.update_batch_metadata(
-                                                   meta_file=updated_meta_file,
-                                                   update_during_init=found_during_init
-                                                   )
-                    
+                meta_file: SourceFileMeta = kwargs.get("meta_file", None) # type: ignore
+                if not meta_file:
+                    filepath = Path(str(event.src_path))
+                    symlink_dir = self.define_symlink_folder(filepath=filepath)
+                    meta_file = SourceFileMeta(
+                                               filepath=filepath,
+                                               symlink_dir=symlink_dir
+                                              )
+                meta_id = meta_file.symlink.as_posix()
 
-                
+                db_meta:Dict[str, datetime | str | int | None] = kwargs.get(
+                                                                            "db_meta",
+                                                                            self.crawler._extract_file_info_from_db(
+                                                                                                                    'symlink',
+                                                                                                                    meta_id
+                                                                                                                   )
+                                                                           )
+                if not db_meta:
+                    logger.error(f"Файл {event.src_path} не был зарегистрирован в БД. Перенаправление в FileCreatedEvent")
+                    event = FileCreatedEvent(
+                                             src_path=event.src_path,
+                                             dest_path="",
+                                             is_synthetic=False
+                                            )
+                    self.handle_file_event(event, **kwargs)
+                    return None
+
+                # Если событие зарегистрировано в процессе первичной индексации, то дебаунс не применяется
+                if found_during_init:
+                    __register_file_changes(
+                                            db_meta,
+                                            meta_file,
+                                            meta_id
+                                           )
+                    return None
+                else:
+                    timer = self.crawler.timers.get(meta_id)
+                    if timer:
+                        timer.cancel()
+                    self.crawler.timers[meta_id] = threading.Timer(
+                                                                   interval=self.crawler.file_modified_debounce,
+                                                                   function=__register_file_changes,
+                                                                   args=(db_meta, meta_file, meta_id)
+                                                                  )
+                    self.crawler.timers[meta_id].start() # type: ignore
+                    return None                    
+                                   
             # действия при перемещении файла
             elif isinstance(event, FileMovedEvent):
-                symlink:Path = kwargs.get("symlink", Path())
+                def replace_symlink_source(symlink: Path, new_source: Path) -> None:
+                    """
+                    Если симлинк существует, то меняем его источник
+                    """
+                    if symlink.exists():
+                        if symlink.is_symlink():
+                            symlink.unlink()
+                            symlink.symlink_to(new_source)
+                            logger.debug(f"Симлинк {symlink} обновлен.")
+                        else:
+                            logger.error(f"{symlink} is not a symlink")
+
+                symlink:Path = kwargs.get(
+                                          "symlink",
+                                          self.define_symlink_folder(
+                                                                     filepath=Path(str(event.dest_path)),
+                                                                    ) 
+                                         )
                 # Создаём новый симлинк на файл
                 replace_symlink_source(
-                                        symlink=symlink, 
-                                        new_source=Path(event.dest_path) # type: ignore
-                                        )
-                # Обновляем в базе данных информацию о файле
-                self.dao.update_one(
-                                    collection="files",
-                                    key={"filepath":event.src_path},
-                                    doc={"filepath":event.dest_path}
-                                   )
+                                       symlink=symlink, 
+                                       new_source=Path(event.dest_path) # type: ignore
+                                      )
+                # Записываем в коллекцию для обновления данных в БД
+                self.crawler.new_indexed_file_moves[symlink.as_posix()] = Path(str(event.dest_path))
                 logger.debug(f"Файл {event.src_path} перемещён в {event.dest_path}")
-                logger.debug(f"Симлинк {symlink} обновлен.")
                 return None
             
             # действия при удалении файла
             elif isinstance(event, FileDeletedEvent):
-                self.crawler._process_deleted_files([paths[0]], {})
+                db_meta = kwargs.get("db_meta",
+                                     self.crawler._extract_file_info_from_db(
+                                                                             meta_field="filepath",
+                                                                             meta_id=str(event.src_path),
+                                                                             additional_fields=[
+                                                                                                'batch',
+                                                                                                'sample',
+                                                                                                'fingerprint',
+                                                                                                'quality_pass',
+                                                                                                'extension'
+                                                                                               ]
+                                                                            )
+                                    )
+                if db_meta:
+                    self.crawler.new_indexed_file_deletions[str(db_meta['symlink'])] = datetime.now()
+                    self.crawler.file_diffs[str(db_meta['symlink'])] = {"status": "deleted"}
+                    remove_symlink(Path(str(db_meta['symlink'])))
+                    # Производим удаление данных файла из меты батча и образца
+                    self.crawler.update_batch_metadata(
+                                                       update_type="delete",
+                                                       meta_file_dict=db_meta # type: ignore
+                                                      )
+                else:
+                    logger.error(f"Удалён незарегистрированный файл {event.src_path}")
                 
         except Exception as e:
             logger.error("Ошибка обработки события : %s", e, exc_info=True)
-    
+
+    def define_symlink_folder(
+                              self,
+                              filepath: Path
+                             ) -> Path:
+        """
+        Определяет папку для симлинка исходного файла
+
+        :param filepath: Путь к файлу
+        :return: Путь к папке для симлинка
+        """
+        symlink_folder = self.crawler.link_dir / "unknown_extension"
+        try:
+            filetype = next(
+                            f[1:] for f in filepath.suffixes
+                            if f"*{f}" in self.patterns  # type: ignore
+                            )
+            symlink_folder = self.crawler.link_dir / filetype
+        except StopIteration:
+            logger.error(f"Неизвестный тип файла {filepath.as_posix()}")
+        finally:
+            return symlink_folder
+
 
 class FsCrawler():
     """
@@ -435,7 +485,9 @@ class FsCrawler():
                  link_dir:Path, 
                  dao: ConfigurableMongoDAO,
                  filetypes: tuple,
-                 debounce: int
+                 db_debounce: int,
+                 file_modified_debounce: int,
+                 db_update_interval: int
                 ):
         """
         Инициализация FsCrawler
@@ -451,40 +503,166 @@ class FsCrawler():
         self.dao = dao
         self.filetypes: Tuple[str] = filetypes
         self.unique_file_properties = ['filepath', 'size', 'dev', 'ino', 'modified']
+        # Списки саммери
+        self.summaries: Dict[str, Set[Path]] = {"final_summary": set(), "sequencing_summary": set()}
+        patterns2watch = [f"*.{filetype}" for filetype in self.filetypes]
+        patterns2watch.extend([f"*{summary}*.txt" for summary in self.summaries.keys()])
         self.event_handler = FsWatcher(
-                                       patterns=[f"*.{filetype}"
-                                                 for filetype in self.filetypes],
+                                       patterns=patterns2watch,
                                        ignore_directories=True,
                                        case_sensitive=False,
-                                       crawler=self,
-                                       dao=dao,
-                                       main_symlink_dir=self.link_dir,
-                                       debounce=debounce
+                                       crawler=self                                       
                                       )
-        self._lock = threading.Lock()
         
-        # Состояние индексации
-        self.summaries: Dict[str, Set[Path]] = {"final_summary": set(), "sequencing_summary": set()}
+        
         # Сюда загружаются объекты из БД, запрашиваемые при наличии новых метаданных файлов
         # В случае отсутствия батча в БД ключ имеет значение None
-        self.loaded_files: Dict[str, Optional[SourceFileMeta]] = {}
-        self.loaded_batches: Dict[str, Optional[BatchMeta]] = {}
-        self.loaded_samples: Dict[str, Optional[SampleMeta]] = {}
-        # Словари, содержащие метаданные файлов, проиндексированные впервые
-        self.new_indexed_files: Dict[str, SourceFileMeta] = {}
-        self.new_indexed_batches: Dict[str, BatchMeta] = {}
-        self.new_indexed_samples: Dict[str, SampleMeta] = {}
+        self.db_files: Dict[str, Dict[str, datetime | str | int | None]] = {}
+        self.loaded_files: Dict[str, SourceFileMeta] = {}
+        self.loaded_batches: Dict[str, BatchMeta] = {}
+        self.loaded_samples: Dict[str, SampleMeta] = {}
+        
         # Словарь, содержащий объекты для курации
         self.curations: Dict[str, BatchMeta] = {}
         # Словарь, содержащий различия между метаданными файлов в БД и ФС
         self.file_diffs: Dict[str, Dict[str, Any]] = {}
+
+        # Запись в БД
+        self.new_indexed_files: Dict[str, SourceFileMeta] = {}
+        self.new_indexed_batches: Dict[str, BatchMeta] = {}
+        self.new_indexed_samples: Dict[str, SampleMeta] = {}
+        # Словарь вида "симлинк: новый путь"
+        self.new_indexed_file_moves: Dict[str, Path] = {}
+        # Словарь вида "симлинк: время удаления"
+        self.new_indexed_file_deletions: Dict[str, datetime] = {}
+        # Куда сохранять зафиксированные изменения в метаданных файлов/батчей/образцов
+        self.db_collections4storing = {
+                                       'new_indexed_files':'files',
+                                       'new_indexed_batches':'batches',
+                                       'new_indexed_samples':'samples',
+                                       'new_indexed_file_moves':'files',
+                                       'curations':'curations'
+                                      }
+        self.db_debounce = db_debounce
+        self.file_modified_debounce = file_modified_debounce
+        self.db_update_interval = db_update_interval
+        # таймеры и блокировки для потокобезопасности и периодической записи в БД
+        self.timers: Dict[str, Optional[threading.Timer]] = {collection:None
+                                                                      for collection in self.db_collections4storing.keys()}
         
+        self.locks: Dict[str, threading.Lock] = {
+                                                 collection:threading.Lock() 
+                                                 for collection in self.db_collections4storing.keys()}
         # Состояние наблюдения
         self.observer: Optional[Observer] = None # type: ignore
+
+        # Инициализация для отслеживания изменений в референсных файлах
+        self.pore_data: Dict[str, Dict[str, Any]]
+        self.ref_versions: Dict[str, str]
+        self.ref_versions, self.pore_data = REFS.get()
+        self._start_ref_monitor()
         
         # Индексация файлов при первичной инициализации
         self.index_files()
 
+    def _extract_file_info_from_db(
+                                   self,
+                                   meta_field:str,
+                                   meta_id:str,
+                                   additional_fields:Optional[List[str]] = None
+                                  ) -> Dict[str, str|int|datetime]:
+        """
+        Поиск актуального (status != "deprecated"/"deleted") файла в БД по meta_id в поле meta_field
+        Возвращает словарь со свойствами 'filepath', 'size', 'dev', 'ino', 'modified'
+        """
+        requested_properties = self.unique_file_properties
+        if additional_fields:
+            requested_properties.extend(additional_fields)
+
+        return self.dao.find_one(
+                                 collection='files',
+                                 query={
+                                        meta_field: meta_id,
+                                        'status': {"$nin":["deprecated", "deleted"]}
+                                       },
+                                 projection={
+                                             '_id':0,
+                                             'symlink':1,
+                                             **{prop:1 for prop in requested_properties}
+                                            }
+                                )
+    
+    def _start_ref_monitor(self):
+        """
+        Запускает периодическую проверку изменений в референсных файлах.
+        """
+        self.ref_monitor_timer = threading.Timer(60.0, self._check_ref_changes)
+        self.ref_monitor_timer.start()
+
+    def _check_ref_changes(self):
+        """
+        Проверяет изменения в референсных файлах.
+        Вызывает обработчики при изменении конфигураций.
+        """
+        current_versions = self.ref_versions.copy()
+        self.ref_versions, self.pore_data = REFS.get()
+        for key in current_versions:
+            if key not in self.ref_versions or current_versions[key] != self.ref_versions[key]:
+                self._handle_ref_change(key)
+        # Перезапуск таймера
+        self.timers['ref_monitor_timer'] = threading.Timer(60.0, self._check_ref_changes)
+        self.timers['ref_monitor_timer'].start()
+
+    def _handle_ref_change(self, key: str):
+        """
+        Обработчик изменений в референсных файлах.
+        Вызывает специфические действия для каждого типа конфига.
+        """
+        if key == 'pore_data':
+            self._handle_pore_data_change()
+
+    def _check_uncurated_batches(self):
+        """
+        Периодически проверяет, не были ли внесены в БД данные, необходимые для курации батчей.
+        """
+        self._handle_pore_data_change()
+        self.timers['_check_uncurated_batches'] = threading.Timer(600.0, self._check_uncurated_batches)
+        self.timers['_check_uncurated_batches'].start()
+
+    def _handle_pore_data_change(self):
+        """
+        Обрабатывает изменения в конфиге pore_data.
+        Выгружает из БД коллекции curations батчи и их поры и типы молекул.
+        В случае наличия полной информации по этим параметрам - запускает
+        обновление метаданных батча и связанных с ним образцов.
+        """
+        logger.info("Конфиг pore_data изменён. Обработка батчей из curations...")
+        data_from_db = self.dao.find(
+                                     collection='curations',
+                                     query={},
+                                     projection={
+                                                 'name': 1,
+                                                 'pore': 1,
+                                                 'experiment_type': 1
+                                                }
+                                    )
+        batches_2_curate = [
+                            {
+                             k['name']:[
+                                        k['pore'],
+                                        k['experiment_type']
+                                       ]
+                            } for k in data_from_db
+                           ]
+        for batch in batches_2_curate:
+            for batch_name, (pore, experiment_type) in batch.items():
+                # Проверяем наличие референсных данных для батча
+                if pore in self.pore_data:
+                    if experiment_type in self.pore_data[pore]:
+                        logger.info(f"Обновление метаданных батча {batch_name}")
+                        self._curate_batch(batch_name)
+                    else:
+                        logger.warning(f"Не найдены референсные данные для батча {batch_name}")
 
     def index_files(self) -> None:
         """
@@ -495,7 +673,7 @@ class FsCrawler():
         logger.info(f"Начата первичная индексация директории: {self.source_dir}")
         
         try:
-            with self._lock:
+            with threading.Lock():
                 # Индексация файлов
                 self.index_fs_files()
                 logger.info(f"Завершена индексация файлов. Проиндексировано:\n  файлов: {len(self.new_indexed_files.keys())}\n  батчей: {len(self.new_indexed_batches.keys())}\n  образцов: {len(self.new_indexed_samples.keys())}")
@@ -506,7 +684,6 @@ class FsCrawler():
             logger.error(f"Ошибка при индексации файлов: {str(e)}")
             raise
 
-
     def index_fs_files(self) -> None:
         """
         Делает первичный обход папок с исходными данными и симлинками к ним,
@@ -515,8 +692,8 @@ class FsCrawler():
         """
         # Получаем словарь вида "симлинк:отпечаток, файловый путь, размер, dev, ino, modified"
         # для файлов, проиндексированных в БД     
-        db_files = self._get_db_files_meta()
-        logger.debug(f"Получено {len(db_files.keys())} записей файлов из БД")
+        self.db_files = self._get_db_files_meta()
+        logger.debug(f"Получено {len(self.db_files.keys())} записей файлов из БД")
         # Получаем список файлов в директории и вложенных папках
         fs_files = get_files_by_extension_in_dir_tree(
                                                       dirs=[self.source_dir],
@@ -558,17 +735,47 @@ class FsCrawler():
                                                          filetype=filetype,
                                                          target_filetype_dir=target_filetype_dir
                                                         )
-                
-        logger.info("Метаданные файлов синхронизированы. Актуализация метаданных батчей и образцов...")
-        # Собрав данные об исходных файлах и батчах, заполняем информацию по образцам
-        for meta_batch in self.new_indexed_batches.values():
-            self.complete_batch_metadata(meta_batch)
-            # дополняем метадату образцов
-            self.form_sample_metadata(meta_batch)        
-        
-        for meta_sample in self.new_indexed_samples.values():
-            #if meta_sample.status == 'indexed':
-            meta_sample.finalize()
+                    # удаляем файл из fs_files и db_files, так как он уже обработан
+                    try:
+                        fs_files.remove(file)
+
+                    except ValueError:
+                        logger.warning(f"Файл {file} уже был обработан")    
+                    
+        # Теперь проходимся по всем файлам в БД, которые не были обработаны, а значит, отсутствуют в ФС
+        # Нам нужно очистить пространство от ссылок на эти файлы
+        # (включая метаданные батчей и образцов, ссылки) и актуализировать метаданные в files
+        if self.db_files:
+            for meta_id, db_meta in self.db_files.items():
+                symlink = Path(meta_id).resolve()
+                # удаляем симлинк, если он есть
+                remove_symlink(symlink)
+                # удаляем запись файла из БД
+                # нам нужно чуть больше данных о файле, чтобы отработать событие
+                # поэтому запросим его заново из БД
+                db_meta = self._extract_file_info_from_db(
+                                                          meta_field="symlink",
+                                                          meta_id=meta_id,
+                                                          additional_fields=[
+                                                                             'batch',
+                                                                             'sample',
+                                                                             'fingerprint',
+                                                                             'quality_pass',
+                                                                             'extension'                                                                                   
+                                                                            ]
+                                                         )
+                self.update_batch_metadata(
+                                           update_type="delete",
+                                           meta_file_dict=db_meta # type: ignore
+                                          )
+            self.db_files = {}
+
+        # Наконец, финализируем метаданные батчей и образцов и записываем метаданные в БД
+        self._fs_changes2db(stage='init')
+
+        # Переходим в режим мониторинга: периодически проверяем коллекции с данными на загрузку в БД на предмет... данных
+        logger.info("Запуск мониторинга...")
+        self._monitor_fs()
 
 
     def _get_db_files_meta(self) -> Dict[str, Dict[str, datetime | str | int | None]]:
@@ -590,8 +797,18 @@ class FsCrawler():
                 for d in files_cursor
                 if 'symlink' in d
                 }
-
-
+    
+    def _monitor_fs(self) -> None:
+        def __check_new_data2fs():
+            if any([getattr(self, collection) for collection in self.db_collections4storing.keys()]):
+                self._fs_changes2db(stage='monitoring')
+            self.timers['db_update_timer'].start() # type: ignore
+        self.timers['db_update_timer'] = threading.Timer(self.db_update_interval, __check_new_data2fs)
+        self.timers['db_update_timer'].start()
+        
+        
+        
+    '''
     def _form_file_metadata(self,
                            file:Path,
                            target_filetype_dir:Path,
@@ -677,101 +894,185 @@ class FsCrawler():
         # Сохраняем мету файла в списке новых файлов
         self.new_indexed_files.update({meta_id:meta_file})
         return meta_file
+    '''
+    def _get_meta_objects(
+                          self,
+                          obj_type:str,
+                          obj_id:str
+                         ) -> BatchMeta|SampleMeta:
+        """
+        Возвращает метаданные батча/образца.
+        - Если объект был ранее изменён (FsCrawler.new_indexed_*) — возвращаем его
+        - Если объект не был изменён, но выгружен из БД (FsCrawler.loaded_*) — возвращаем этот экземпляр
+        - Если объект не был выгружен из БД — выгружаем, сохраняем в кэш (FsCrawler.loaded_*) и возвращаем этот экземпляр
+        - Если объект до этого не существовал — создаём его, сохраняем в кэш и возвращаем
 
-
+        :param obj_type: тип объекта
+        :param obj_id: идентификатор объекта
+        :return: объект BatchMeta|SampleMeta
+        """
+        meta_obj:BatchMeta|SampleMeta
+        obj_config = {
+                           "batch":{
+                                    "loaded":self.loaded_batches,
+                                    "updated":self.new_indexed_batches,
+                                    "db":"batches",
+                                    "class":BatchMeta
+                                   },
+                           "sample":{
+                                     "loaded":self.loaded_samples,
+                                     "updated":self.new_indexed_samples,
+                                     "db":"samples",
+                                     "class":SampleMeta
+                                    }        
+                          }
+        config = obj_config[obj_type]
+    
+        # Проверяем обновлённые объекты
+        if obj_id in config["updated"]:
+            return config["updated"][obj_id]
+        
+        # Проверяем загруженные объекты
+        if obj_id in config["loaded"]:
+            return config["loaded"][obj_id]
+        
+        # Загружаем из БД
+        doc = self.dao.find_one(
+                                collection=config["db"],
+                                query={
+                                       "name": obj_id,
+                                       "status":{"$nin": ["deprecated", "deleted"]}
+                                      },
+                                projection=None  # Загружаем все поля
+                               )
+        if doc:
+            meta_obj = config["class"].from_db(doc)
+            # Удаляем записи об изменениях и предыдущей версии 
+            # в случае изменений эти атрибуты будут заполнены новой информацией
+            meta_obj.changes = {} # type: ignore
+            meta_obj.previous_version = ''
+            config["loaded"][obj_id] = meta_obj
+            return meta_obj
+        
+        # Создаём новый объект
+        if obj_type == 'batch':
+            meta_obj = BatchMeta(
+                                 name=obj_id,
+                                 final_summary=next((s for s
+                                                     in self.summaries['final_summary']
+                                                     if obj_id in s.name),
+                                                     Path()
+                                                   ),
+                                 sequencing_summary=next((s for s
+                                                          in self.summaries['sequencing_summary']
+                                                          if obj_id in s.name),
+                                                          Path()
+                                                        )
+                                )
+        elif obj_type == 'sample':
+            meta_obj = SampleMeta(name=obj_id)
+        config["loaded"][obj_id] = meta_obj # type: ignore
+        return meta_obj # type: ignore
+        
     def update_batch_metadata(
                               self,
-                              meta_file:SourceFileMeta,
-                              update_during_init:bool
+                              update_type:str,
+                              meta_file:Optional[SourceFileMeta] = None,
+                              meta_file_dict:Optional[Dict[str, str|int|datetime]] = None
                              ) -> None:
         """
-        Формируем метаданные батча: 
-        если батч не существует — создаём его;
-        если есть — добавляем файл в него;
-        если батч был в БД - генерируем BatchMeta и обновляем его
+        Формирует метаданные батча/образца.
+        - Если объект был ранее изменён — обновляем его
+        - Если объект не был изменён, но выгружен из БД — обновляем этот экземпляр
+        - Если объект не был выгружен из БД — выгружаем, сохраняем в кэш и работаем с ним
+        - Если объект до этого не существовал — создаём его
+        В зависимости от типа обновления добавляет, изменяет или удаляет метаданные файла из меты объекта.
+        Если объект - батч, то после обновления аналогичные действия проводятся и с образцами, относящимися к батчу.
+        
         :param meta_file: объект SourceFileMeta
+        :param update_type: тип обновления
+        :param obj_type: тип объекта
         :return: словарь батчей
         """
+        meta_batch: BatchMeta
+        file_id:Path = Path()
         # Добавляем записи о батче и образце, к которым относится файл
         # В этой же функции батч/образец добавляются в соответствующие списки
-        name = meta_file.batch
-        meta_file_id = meta_file.symlink.as_posix()
-        # Для начала проверяем, есть ли батч в обновлённых батчах
-        if name in self.new_indexed_batches.keys():
-            meta_batch = self.new_indexed_batches[name]
-        # В противном случае — проверяем, есть ли он в БД
-        else:
-            # Смотрим в коллекции загруженных батчей
-            if name in self.loaded_batches.keys():
-                pass
-            else:
-                # если и там нет — пробуем загрузить из БД
-                doc = self.dao.find_one(
-                                    collection="batches",
-                                    query={"name": name},
-                                    projection=None  # Загружаем все поля
-                                )
-                if doc:
-                    # Найден в БД? Преобразуем в объект BatchMeta
-                    self.loaded_batches[name] = BatchMeta.from_db(doc)
-                else:
-                    self.loaded_batches[name] = None
-            meta_batch = self.loaded_batches[name]
-            # Если батч успешно выгружен из БД — работаем с ним
-            if meta_batch:
-                # Если батч был обновлён — сохраняем его в new_indexed_batches
-                if meta_batch.update_batch(
-                                           meta_file.symlink,
-                                           self.file_diffs[meta_file_id]
-                                          ):
-                    self.new_indexed_batches[name] = meta_batch
-            # Если же батч не был выгружен из БД (и в new_indexed_batches его тоже нет) — создаём его
-            else:
-                meta_batch = BatchMeta(
-                                       name=name,
-                                       final_summary=next((s for s
-                                                           in self.summaries['final_summary']
-                                                           if name in s.name),
-                                                          Path()
-                                                         ),
-                                       sequencing_summary=next((s for s
-                                                                in self.summaries['sequencing_summary']
-                                                                if name in s.name),
-                                                               Path()
-                                                              )
-                                      )
-                
-        # Отлично, мета батча в нашем распоряжении; теперь разберёмся, что мы делаем:
-        # добавляем мету файла, модифицируем её или удаляем полностью    
-                meta_batch.update_batch(
-                                        meta_file.symlink,
-                                        self.file_diffs[meta_file_id]
-                                       )
-                self.new_indexed_batches[name] = meta_batch
+        if meta_file:
+            batch_name = meta_file.batch
+            file_id = meta_file.symlink
+        elif meta_file_dict:
+            batch_name = str(meta_file_dict['batch'])
+            file_id:Path = Path(str(meta_file_dict['symlink']))
+        meta_batch = self._get_meta_objects(obj_type='batch', obj_id=batch_name) # type: ignore
+        
+        batch_changed = meta_batch.update_batch(
+                                                file_meta=meta_file,
+                                                file_meta_dict=meta_file_dict,
+                                                change_type=update_type,
+                                                file_diffs=self.file_diffs[file_id.as_posix()]
+                                               )
+        # если батч был изменён — добавляем его в список обновлённых, затем обновляем метаданные образца,
+        # к которому относится изменённый файл
+        if batch_changed:
+            meta_batch.changes[file_id] = self.file_diffs[file_id.as_posix()]
+            self.new_indexed_batches[batch_name] = meta_batch # type: ignore
 
-
-
-
-
-            meta_batch = self.new_indexed_batches.get(name)
-            # Если батча нет в списке — создаём его
-            if not meta_batch:
-                meta_batch = BatchMeta(
-                            name=name,
-                            final_summary=next((s for s
-                                                in self.summaries['final_summary']
-                                                if name in s.name), Path()),
-                            sequencing_summary=next((s for s
-                                                    in self.summaries['sequencing_summary']
-                                                    if name in s.name), Path()))
-            # Добавляем файл в мету батча
-            meta_batch.add_file2batch(meta_file)
-            # Обновляем батч в списке батчей
-            self.new_indexed_batches[name] = meta_batch
-        return meta_batch
+            meta_sample:SampleMeta = self._get_meta_objects(obj_type='sample', obj_id=meta_file.sample) # type: ignore
+            sample_changed = meta_sample.update_sample(
+                                                       file_meta=meta_file, # type: ignore
+                                                       batch_meta=meta_batch,
+                                                       change_type=update_type,
+                                                       file_diffs=self.file_diffs[file_id.as_posix()]
+                                                      )
+            if sample_changed:
+                meta_sample.changes[meta_batch.name].update({file_id: self.file_diffs[file_id.as_posix()]})
+                self.new_indexed_samples[meta_sample.name] = meta_sample
     
-
-    def complete_batch_metadata(self, meta_batch:BatchMeta) -> None:
+    def _curate_batch(
+                      self,
+                      batch_name: str
+                      ) -> None:
+        """
+        Обработка батча из коллекции curations
+        """
+        logger.debug(f"Обработка батча '{batch_name}' из curations.")
+        meta_batch:BatchMeta = self._get_meta_objects(obj_type='batch', obj_id=batch_name) # type: ignore
+        meta_batch.status = 'indexed'
+        for sample in meta_batch.samples:
+            sample_meta:SampleMeta = self._get_meta_objects(obj_type='sample', obj_id=sample) # type: ignore
+            # Запрашиваем метаданные файлов, относящихся к образцу, формируем из них меты
+            db_metas = self.dao.find(
+                                     collection='files',
+                                     query={'batch': batch_name,
+                                            'sample': sample,
+                                            'status':{"$nin":["deprecated", "deleted"]}},
+                                     projection={
+                                                 '_id':0,
+                                                 'symlink':1,
+                                                 "extension":1,
+                                                 "size":1,
+                                                 "quality_pass":1,
+                                                 "fingerprint":1
+                                                })
+            file_metas = {k["name"]: SourceFileMeta(
+                                                    filepath=Path(),
+                                                    symlink_dir=Path(),
+                                                    extension=k["extension"],
+                                                    size=k["size"],
+                                                    quality_pass=k["quality_pass"]
+                                                   )
+                          for k in db_metas
+                         }
+            sample_changed = sample_meta._extract_curated_batch_meta(meta_batch, file_metas)
+            if sample_changed:
+                self.new_indexed_samples[sample_meta.name] = sample_meta
+        self.dao.delete_one(
+                            collection='curations',
+                            query={"name": batch_name}
+                           )
+        
+    def _complete_batch_metadata(self, meta_batch:BatchMeta) -> None:
         # Создаём отпечатки для каждого батча и определяем статус
         meta_batch.finalize()
         # Если до этого поймали 'curation' - отправляем его на курацию
@@ -780,15 +1081,103 @@ class FsCrawler():
             # !!! TO-DO Сформировать уведомление о необходимости курации
         # Если при индексации была сформирована новая версия батча — помечаем старую версию как 'deprecated'
 
+    def _fs_changes2db(
+                       self,
+                       stage:str
+                      ) -> None:
+        """
+        Записывает в БД данные из словаря self.new_indexed_*.
+        В зависимости от stage выполняет дебаунс (ожидает, пока загружаемые коллекции 
+        не будут определённое время неизменными)
+        """
+        def __prepare_for_transition(
+                                     stage:str,
+                                     collection:str,
+                                     db_collection:str 
+                                    ):
+            data:Dict[str, Union[str, Path|SourceFileMeta|BatchMeta|SampleMeta]] = getattr(self, collection, {})
+            if data:
+                for meta in data.values():
+                    if isinstance(meta, (BatchMeta, SampleMeta)):
+                        meta.finalize()
+                if stage == 'init':
+                    __execute_data_transition(
+                                              collection=collection,
+                                              db_collection=db_collection,
+                                              data=data
+                                             )
+                elif stage == 'monitoring':
+                    if self.timers[collection]:
+                    self.timers[collection].cancel() # type: ignore
+                self.timers[collection] = threading.Timer(
+                                                          interval=self.db_debounce,
+                                                          function=__execute_data_transition,
+                                                          args=[
+                                                                collection,
+                                                                db_collection,
+                                                                data
+                                                               ]
+                                                         )
+                self.timers[collection].start() # type: ignore
+            else:
+                logger.info(f"Нет данных для записи в БД: {collection}")
 
-def form_sample_metadata(meta_batch:BatchMeta,
-                        samples: Dict[str, SampleMeta],
-                        files: Dict[str, SourceFileMeta]
-                       ) -> Dict[str, SampleMeta]:
-    samples = upsert_samples(samples=samples,
-                             src=meta_batch,
-                             files_meta=files)
-    return samples
+        def __execute_data_transition(
+                                      collection:str,
+                                      db_collection:str,
+                                      data:Dict[str, Union[str, Path|SourceFileMeta|BatchMeta|SampleMeta]]
+                                     ) -> None:
+            data_lock = self.locks[collection]
+            # блокируем запись в коллекцию на время записи данных в БД
+            with data_lock:
+                if collection == 'new_indexed_file_moves':
+                    for symlink, new_filepath in data.items():
+                        if new_filepath:
+                            self.dao.update_one(
+                                                collection=db_collection,
+                                                query={
+                                                       "symlink": symlink,
+                                                       "status": {"$nin": ["deprecated", "deleted"]}
+                                                      },
+                                                doc={"filepath": new_filepath}
+                                               )
+                elif collection == 'new_indexed_file_deletions':
+                    for symlink, time_of_deletion_registration in data.items():
+                        self.dao.update_one(
+                                            collection=db_collection,
+                                            query={
+                                                   "symlink": symlink,
+                                                   "status": {"$nin": ["deprecated", "deleted"]}
+                                                  },
+                                            doc={
+                                                 "status": "deleted",
+                                                 "deleted_at": time_of_deletion_registration
+                                                }
+                                           )
+                
+                else:
+                    data2upload: List[Dict[str, Any]] = [meta.__dict__ for meta in data.values()] # type: ignore
+                    # Обновляем статусы устаревших метаданных
+                    for meta in data2upload:
+                        if meta["previous_version"]:
+                            self.dao.update_one(
+                                                collection=db_collection,
+                                                query={"fingerprint": meta["previous_version"]},
+                                                doc={"status": "deprecated"}
+                                               )
+                    # Добавляем новые метаданные одной загрузкой
+                    self.dao.insert_many(
+                                         collection=db_collection,
+                                         documents=data2upload
+                                        )
+
+        for collection, db_collection in self.db_collections4storing.items():
+            __prepare_for_transition(
+                                     stage=stage,
+                                     collection=collection,
+                                     db_collection=db_collection
+                                    )
+            return None
 
 
 def get_files_by_extension_in_dir_tree(
@@ -840,52 +1229,20 @@ def get_files_by_extension_in_dir_tree(
         raise FileNotFoundError("Файлы не найдены")
     return results
 
-
-def replace_symlink_source(symlink: Path, new_source: Path) -> None:
+def remove_symlink(
+                   symlink: Path
+                  ) -> None:
     """
-    Если симлинк существует, то меняем его источник
+    Если симлинк существует, то удаляем его
+
+    :param symlink: Путь к симлинку
     """
     if symlink.exists():
         if symlink.is_symlink():
             symlink.unlink()
-            symlink.symlink_to(new_source)
+            logger.debug(f"Симлинк {symlink} удалён.")
         else:
-            raise FileExistsError(f"{symlink} is not a symlink")
-
-
-def obj_in_dict(obj: Any, dict_: Dict[Any, Any]) -> bool:
-    """
-    Проверяет, что объект obj есть в словаре dict_
-
-    :param obj: объект
-    :return: True, если объект есть в словаре
-    """
-    if obj in dict_.keys():
-        return True
+            logger.error(f"{symlink} is not a symlink")
     else:
-        return False
-
-
-def upsert_samples(
-                 samples: Dict[str, SampleMeta],
-                 src: BatchMeta,
-                 files_meta: Dict[str, SourceFileMeta]
-                 ) -> Dict[str, SampleMeta]:
-    """
-    Обеспечивает уникальность SampleMeta по имени и добавляет туда информацию по файлам.
-    Если образца с таким именем нет — создаёт; если есть — переиспользует и дополняет.
-
-    :param batches: словарь существующих батчей по имени
-    :param src: объект SourceFileMeta (должны быть заполнены: batch, extension, size, symlink, quality_pass)
-    :return: актуальный объект BatchMeta
-    """
-    for sample_name in src.samples:
-        sm = samples.get(sample_name)
-        if sm is None:
-            sm = SampleMeta(name=sample_name)
-            sm.add_batch2sample(src, files_meta)
-        else:
-            sm.add_batch2sample(src, files_meta)
-        samples[sample_name] = sm
-    return samples
-
+        logger.error(f"Симлинк {symlink} не существует.")
+    return None

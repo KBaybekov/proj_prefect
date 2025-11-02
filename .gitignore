@@ -1,8 +1,9 @@
 /.env
 /.env_real
 /archive
+/docs/g*/
 /logs
-/src/utils/deprecated/
+/src/test*.py
 /test
 /tmp
 /src/wipe_db_data.py

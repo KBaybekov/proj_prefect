@@ -15,5 +15,14 @@ result_dir: "/common_share/github/proj_prefect/test/data/result/"
 tmp_dir: "/common_share/github/proj_prefect/test/data/tmp/"
 source_files_extensions: "fast5,pod5,fastq.gz"
 
+# TASK SCHEDULER INFO
+slurm_poll_interval: 60
+slurm_template: ""
+
 # WATCHER INFO
-watchdog_debounce: 10
+# Пауза перед записью в БД в секундах (для исключения множественных обращений к БД)
+db_writing_debounce: 10
+# Время перед регистрацией модификации файла в секундах (для исключения генерации метаданных для файла во время его копирования)
+file_modification_debounce: 5
+# Пауза между проверками на наличие данных для загрузки в БД в секундах
+db_update_interval: 30

@@ -14,7 +14,7 @@ import subprocess
 from utils.refs import REFS
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
-    from utils.db import ConfigurableMongoDAO
+    from utils.db.db import ConfigurableMongoDAO
 from utils.logger import get_logger
 
 logger = get_logger(name=__name__)
@@ -37,17 +37,45 @@ class FileGroup:
         file_added: bool = False
         if file not in self.files:
             self.files.add(file)
+            old_size = self.size
             self.size += size
+            logger.debug(f"Добавлен файл: {file}. Размер FileGroup изменён: {old_size} -> {self.size}")
             file_added = True
+        else:
+            logger.debug(f"Файл {file} уже был добавлен в FileGroup")
         return file_added
 
-
-    def edit_file_meta(self, edit_dict: Dict[Path, Dict[str, List[Any]]]) -> None:
+    def edit_file_meta(self, edit_dict: Dict[Path, Dict[str, List[Any]]]) -> bool:
+        """
+        Проходит по словарю изменений и обновляет размеры файлов в группе.
+        Возвращает True, если размеры были изменены
+        """
+        size_changed: bool = False
         # проходим по словарям изменений
         for mod_data in edit_dict.values():
             size_diffs = mod_data.get('size')
             if size_diffs:
-                self.size += (size_diffs[1] - size_diffs[0])
+                diff = size_diffs[1] - size_diffs[0]
+                if diff:
+                    old_size = self.size
+                    self.size += diff
+                    logger.debug(f"Размер FileGroup изменён: {old_size} -> {self.size}")
+                    size_changed = True
+        return size_changed
+        
+    def remove_file_from_group(self, file:Path, size:int) -> bool:
+        """
+        Удаляет файл из группы файлов, если он был добавлен.
+        Возвращает True, если файл был удалён
+        """
+        file_removed: bool = False
+        if file in self.files:
+            self.files.remove(file)
+            old_size = self.size
+            self.size -= size
+            logger.debug(f"Удалён файл: {file}. Размер FileGroup изменён: {old_size} -> {self.size}")
+            file_removed = True
+        return file_removed
 
 
 @dataclass(slots=True)
@@ -69,16 +97,16 @@ class FileSubset:
         Восстанавливает объект FileSubset из документа БД.
         """
         return FileSubset(
-                        size=doc.get("size", 0),
-                        pass_=FileGroup(
-                                        files={Path(f) for f in doc.get("pass", {}).get("files", set())},
-                                        size=doc.get("pass", {}).get("size", 0)
-                                    ),
-                        fail=FileGroup(
-                                    files={Path(f) for f in doc.get("fail", {}).get("files", set())},
-                                    size=doc.get("fail", {}).get("size", 0)
-                                    ),
-                        )
+                          size=doc.get("size", 0),
+                          pass_=FileGroup(
+                                          files={Path(f) for f in doc.get("pass", {}).get("files", set())},
+                                          size=doc.get("pass", {}).get("size", 0)
+                                         ),
+                          fail=FileGroup(
+                                         files={Path(f) for f in doc.get("fail", {}).get("files", set())},
+                                         size=doc.get("fail", {}).get("size", 0)
+                                        ),
+                         )
 
 
     def add2file_subset(self, file: Path, size: int, qc_pass: bool) -> bool:
@@ -88,20 +116,47 @@ class FileSubset:
         """
         file_added: bool = False
         if qc_pass:
+            logger.debug(f"Добавляем файл {file} в FileSubset 'pass_'")
             file_added = self.pass_.add2file_group(file, size)
         else:
+            logger.debug(f"Добавляем файл {file} в FileSubset 'fail'")
             file_added = self.fail.add2file_group(file, size)
         if file_added:
             self.size += size
         return file_added
-        
 
-    def edit_file_meta(self, edit_dict: Dict[Path, Dict[str, List[Any]]]) -> None:
+    def edit_file_meta(self, edit_dict: Dict[Path, Dict[str, List[Any]]]) -> bool:
+        subset_changed: bool = False
+        if not edit_dict:
+            logger.debug("Изменений в метаданных нет")
+            return subset_changed
         # проходим по словарям изменений
         for mod_data in edit_dict.values():
             size_diffs = mod_data.get('size')
             if size_diffs:
-                self.size += (size_diffs[1] - size_diffs[0])
+                diff = size_diffs[1] - size_diffs[0]
+                if diff:
+                    old_size = self.size
+                    self.size += diff
+                    logger.debug(f"Размер FileSubset изменён: {old_size} -> {self.size}")
+                    subset_changed = True
+        return subset_changed
+
+    def remove_file_from_subset(self, file:Path, size:int, qc_pass:bool) -> bool:
+        """
+        Удаляет файл из сабсета файлов, если он был добавлен.
+        Возвращает True, если файл был удалён
+        """
+        file_removed: bool = False
+        if qc_pass:
+            logger.debug(f"Удаляем файл {file} из FileSubset 'pass_'")
+            file_removed = self.pass_.remove_file_from_group(file, size)
+        else:
+            logger.debug(f"Удаляем файл {file} из FileSubset 'fail'")
+            file_removed = self.fail.remove_file_from_group(file, size)
+        if file_removed:
+            self.size -= size
+        return file_removed
 
 
 @dataclass(slots=True)
@@ -124,7 +179,6 @@ class FileSet:
     pod5: FileSubset = field(default_factory=FileSubset)
     fq: FileSubset = field(default_factory=FileSubset)
 
-
     @staticmethod
     def from_db(doc: Dict[str, Any]) -> FileSet:
         """
@@ -141,7 +195,6 @@ class FileSet:
                         fq=FileSubset.from_db(doc.get("fq", {}))
                         )
 
-
     def add2file_set(self, file: Path, fingerprint:str, extension: str, size: int, qc_pass: bool) -> bool:
         """
         Добавляет файл в сет файлов (в зависимости от расширения) 
@@ -153,15 +206,19 @@ class FileSet:
         if file not in self.files:
             # выбираем сабсет на основе расширения файла
             if "fast5" in extension:
+                logger.debug(f"Добавляем файл {file} в FileSubset 'fast5'")
                 file_added = self.fast5.add2file_subset(file, size, qc_pass)
             elif "pod5" in extension:
+                logger.debug(f"Добавляем файл {file} в FileSubset 'pod5'")
                 file_added = self.pod5.add2file_subset(file, size, qc_pass)
             elif any([
                     fq_ext in extension
                     for fq_ext in ['fq', 'fastq']
                     ]):
+                logger.debug(f"Добавляем файл {file} в FileSubset 'fq'")
                 file_added = self.fq.add2file_subset(file, size, qc_pass)
             else:
+                logger.debug(f"Неизвестный тип файла: {extension}; файл не добавлен в FileSubset")
                 return False
 
             if file_added:
@@ -171,27 +228,76 @@ class FileSet:
                 if qc_pass:
                     self.size_pass += size
                     if extension in ['fast5', 'pod5']:
-                        self.size_pass_sourcefiles =+ size
+                        self.size_pass_sourcefiles += size
                 else:
                     self.size_fail += size
         return file_added
 
-
-    def edit_file_meta(self, edit_dict: Dict[Path, Dict[str, List[Any]]]) -> None:
+    def edit_file_meta(self, edit_dict: Dict[Path, Dict[str, List[Any]]]) -> bool:
+        """
+        Функция для обновления метаданных файлов в FileSet
+        Возвращает True, если были изменены метаданные
+        """
+        fileset_changed: bool = False
         # проходим по словарям изменений
         for file, mod_data in edit_dict.items():
             size_diffs = mod_data.get('size')
             if size_diffs:
-                old_val = size_diffs[0]
-                new_val = size_diffs[1]
-                size2add = new_val - old_val
-                self.size_total += size2add
-                if 'pass' in file.name:
-                    self.size_pass += size2add
-                    if file.suffix in ['.fast5', '.pod5']:
-                        self.size_pass_sourcefiles += size2add
-                else:
-                    self.size_fail += size2add
+                diff = size_diffs[1] - size_diffs[0]
+                if diff:
+                    old_total = self.size_total
+                    self.size_total += diff
+                    logger.debug(f"Общий размер FileSet изменён: {old_total} -> {self.size_total}")
+                    fileset_changed = True
+                    if 'pass' in file.name:
+                        old_pass = self.size_pass
+                        self.size_pass += diff
+                        logger.debug(f"Общий размер файлов 'pass' изменён: {old_pass} -> {self.size_pass}")
+                        if file.suffix in ['.fast5', '.pod5']:
+                            old_sourcefiles = self.size_pass_sourcefiles
+                            self.size_pass_sourcefiles += diff
+                            logger.debug(f"Общий размер исходных файлов изменён: {old_sourcefiles} -> {self.size_pass_sourcefiles}")
+                    else:
+                        old_fail = self.size_fail
+                        self.size_fail += diff
+                        logger.debug(f"Общий размер файлов 'fail' изменён: {old_fail} -> {self.size_fail}")
+        return fileset_changed
+
+    def remove_from_fileset(self, file:Path, extension:str, size:int, qc_pass:bool) -> bool:
+        """
+        Удаляет файл из сета файлов (в зависимости от расширения) 
+        и соответствующего FileSubset.
+        Возвращает True, если файл был удалён
+        """
+        file_removed: bool = False
+        # выбираем сабсет на основе расширения файла
+        if "fast5" in extension:
+            file_removed = self.fast5.remove_file_from_subset(file, size, qc_pass)
+            if file_removed:
+                logger.debug(f"Удалён файл {file} из FileSubset 'fast5'")
+        elif "pod5" in extension:
+            file_removed = self.pod5.remove_file_from_subset(file, size, qc_pass)
+            if file_removed:
+                logger.debug(f"Удалён файл {file} из FileSubset 'pod5'")
+        elif any([
+                fq_ext in extension
+                for fq_ext in ['fq', 'fastq']
+                ]):
+            file_removed = self.fq.remove_file_from_subset(file, size, qc_pass)
+            if file_removed:
+                logger.debug(f"Удалён файл {file} из FileSubset 'fq'")
+
+        if file_removed:
+            del self.files[file]
+            # Удаляем размер файла из общего размера
+            self.size_total -= size
+            if qc_pass:
+                self.size_pass -= size
+                if extension in ['fast5', 'pod5']:
+                    self.size_pass_sourcefiles -= size
+            else:
+                    self.size_fail -= size
+        return file_removed
 
 
 @dataclass(slots=True)
@@ -202,14 +308,12 @@ class PoreSet:
     dorado_container: str = field(default="")
     available_modifications: List[str] = field(default_factory=list)
     refs_version: str = field(default="")
-    
 
     def __post_init__(self):
         data = pore_data[self._pore_version]
         self.dorado_container = data['dorado_container']
         self.available_modifications = data['available_modifications'][self._molecule_type]
         self.refs_version = refs_version['pore_data']
-
 
     @staticmethod
     def from_db(doc: Dict[str, Any],
@@ -234,7 +338,6 @@ class MoleculeData:
     size_pass_sourcefiles: int = 0
     size_fail: int = 0
 
-
     @staticmethod
     def from_db(doc: Dict[str, Any], molecule_type:str) -> MoleculeData:
         """
@@ -253,7 +356,6 @@ class MoleculeData:
                             size_pass_sourcefiles=doc.get("size_pass_sourcefiles", 0),
                             size_fail=doc.get("size_fail", 0)
                            )
-
 
     def add2molecule_set(self, file:Path, fingerprint:str, molecule:str, pore:str, extension:str, size:int, qc_pass:bool) -> bool:
         file_added: bool = False
@@ -279,49 +381,127 @@ class MoleculeData:
                 logger.warning(f"Файл  {file}: Неизвестная версия поры '{pore}'")
         return file_added
 
-
-    def edit_file_meta(self, edit_dict: Dict[Path, Dict[str, List[Any]]]) -> None:
+    def edit_file_meta(self, edit_dict: Dict[Path, Dict[str, List[Any]]]) -> bool:
+        """
+        Вносит изменения в метаданные файла в MoleculeData.
+        Если изменение было, возвращает True
+        """
+        molecule_data_changed: bool = False
         # проходим по словарям изменений
         for file, mod_data in edit_dict.items():
             size_diffs = mod_data.get('size')
             if size_diffs:
-                old_val = size_diffs[0]
-                new_val = size_diffs[1]
-                size2add = new_val - old_val
-                self.size_total += size2add
-                if 'pass' in file.name:
-                    self.size_pass += size2add
-                    if file.suffix in ['.fast5', '.pod5']:
-                        self.size_pass_sourcefiles += size2add
+                diff = size_diffs[1] - size_diffs[0]
+                if diff:
+                    if file in self.files:
+                        molecule_data_changed = True
+                        # Добавляем размер файла к общему размеру
+                        old_total = self.size_total
+                        self.size_total += diff
+                        logger.debug(f"Общий размер MoleculeData изменён: {old_total} -> {self.size_total}")
+                        if 'pass' in file.name:
+                            self.size_pass += diff
+                            if file.suffix in ['.fast5', '.pod5']:
+                                self.size_pass_sourcefiles += diff
+                        else:
+                            self.size_fail += diff
+                    else:
+                        logger.error(f"Файл {file} не найден в MoleculeData")
+        return molecule_data_changed
+    
+    def remove_file_from_molecule_set(
+                                      self,
+                                      file:Path,
+                                      pore:str,
+                                      extension:str,
+                                      size:int,
+                                      qc_pass:bool
+                                     ) -> bool:
+        """
+        Удаляет файл из MoleculeData.
+        Если файл был удалён, возвращает True
+        """
+        file_removed: bool = False
+
+        if file in self.files:
+            file_removed = self.pores[pore].files.remove_from_fileset(file, extension, size, qc_pass)
+            if file_removed:
+                self.files.remove(file)
+                # Отнимаем размер файла от общего размера
+                self.size_total -= size
+                if qc_pass:
+                    self.size_pass -= size
+                    # Отнимаем размер файла от общего размера файлов, подходящих для бейсколлинга
+                    if extension in ['fast5', 'pod5']:
+                        self.size_pass_sourcefiles -= size
                 else:
-                    self.size_fail += size2add
+                    self.size_fail -= size
+        else:
+            logger.error(f"Файл не найден в MoleculeData: {file}")
+        return file_removed
 
 
 # Класс для хранения метаданных исходных файлов
 @dataclass(slots=True)
 class SourceFileMeta:
-    name: str  = field(init=False)
+    """
+    Класс для хранения метаданных исходных файлов.
+    """
     filepath: Path
-    directory: Path = field(init=False)
     symlink_dir: Path
-    symlink: Path = field(init=False)
-    extension: str = field(init=False)
-    basename:str = field(init=False)
-    quality_pass: bool = field(init=False)
-    batch: str = field(init=False)
-    sample: str = field(init=False)
-    size: int = field(init=False)
-    created: datetime = field(init=False)
-    modified: datetime = field(init=False)
-    dev: int = field(init=False)
-    ino:  int = field(init=False)
-    nlink: int = field(init=False)
-    status: str = field(init=False)
+    name: str  = field(default_factory=str)
+    directory: Path = field(default_factory=Path)
+    symlink: Path = field(default_factory=Path)
+    extension: str = field(default_factory=str)
+    basename:str = field(default_factory=str)
+    quality_pass: bool = field(default_factory=bool)
+    batch: str = field(default_factory=str)
+    sample: str = field(default_factory=str)
+    size: int = field(default=0)
+    created: Optional[datetime] = field(default=None)
+    modified: Optional[datetime] = field(default=None)
+    dev: int = field(default=0)
+    ino:  int = field(default=0)
+    nlink: int = field(default=0)
+    status: str = field(default_factory=str)
     # Список изменений в файле по сравнению с предыдущей версией (если есть)
-    changes: Dict[str, int | datetime] = field(init=False)
+    changes: Dict[str, int | datetime] = field(default_factory=dict)
     # Отпечаток предыдущей версии файла (если есть)
-    previous_version: str = field(init=False)
-    fingerprint: str = field(init=False)
+    previous_version: str = field(default_factory=str)
+    fingerprint: str = field(default_factory=str)
+
+    @staticmethod
+    def from_db(doc: Dict[str, Any]) -> SourceFileMeta:
+        """
+        Создаёт объект BatchMeta из документа БД.
+
+        :param doc: Документ из коллекции 'batches' в MongoDB.
+        :return: Объект BatchMeta.
+        """
+        # Инициализируем основные поля SourceFileMeta
+        file_meta = SourceFileMeta(
+                                   filepath=Path(doc.get("filepath", "")),
+                                   symlink_dir=Path(doc.get("symlink_dir", "")),
+                                   name=doc.get("name", ""),
+                                   directory=Path(doc.get("directory", "")),
+                                   symlink=Path(doc.get("symlink", "")),
+                                   extension=doc.get("extension", ""),
+                                   basename=doc.get("basename", ""),
+                                   quality_pass=doc.get("quality_pass", False),
+                                   batch=doc.get("batch", ""),
+                                   sample=doc.get("sample", ""),
+                                   size=doc.get("size", 0),
+                                   created=doc.get("created"),
+                                   modified=doc.get("modified"),
+                                   dev=doc.get("dev", 0),
+                                   ino=doc.get("ino", 0),
+                                   nlink=doc.get("nlink", 0),
+                                   status=doc.get("status", "indexed"),
+                                   changes=doc.get("changes", {}),
+                                   previous_version=doc.get("previous_version", ""),
+                                   fingerprint=doc.get("fingerprint", "")
+                                  )
+        return file_meta
 
     def __post_init__(self):
         # Получаем данные по принадлежности файла
@@ -351,6 +531,21 @@ class SourceFileMeta:
         self.fingerprint = h.hexdigest()
         
     def finalize(self):
+        def _is_qc_pass(file: Path) -> bool:
+            """
+            Принимает полный путь к файлу и возвращает True, если:
+            - в имени файла есть "pass";
+            - в имени папки файла есть "pass";
+            - ни в имени файла, ни в имени папки файла нет "pass"/"fail"/"skip".
+            Возвращает False в случае наличия "fail"/"skip"
+            """
+            for name in [file.name, file.parent.name]:
+                if "_pass" in name:
+                    return True
+                elif any([fail_flag in name for fail_flag in ['_fail', '_skip']]):
+                    return False
+            return True
+        
         # Получаем данные по частям пути файла
         # Имя файла без директорий и расширения
         self.basename = self.filepath.name.split('.')[0]
@@ -360,7 +555,7 @@ class SourceFileMeta:
         self.extension = next(f.lower().removeprefix('.')
                                for f in raw_extensions
                                if f in ['.fast5', '.fastq', '.fq', '.pod5'])
-        self.quality_pass = True if '_pass_' in self.basename.lower() else False
+        self.quality_pass = _is_qc_pass(self.filepath)
         self.name = self.symlink.name
         self.status = 'indexed'
 
@@ -368,6 +563,9 @@ class SourceFileMeta:
 # Класс для хранения метаданных батчей
 @dataclass(slots=True)
 class BatchMeta:
+    """
+    Класс для хранения метаданных батчей
+    """
     # Определяем при инициализации 
     name: str
     final_summary: Path
@@ -397,7 +595,7 @@ class BatchMeta:
     # Сразу проверяем, что в data/pore_data.yaml есть нужные данные по поре/молекуле
     refs_version: str = field(default_factory=str)
     # Список изменений в батче по сравнению с предыдущей версией (файл:изменения)
-    changes: Dict[Path, Dict[str, int | datetime]] = field(default_factory=dict)
+    changes: Dict[Path, Dict[str, str|int|datetime]] = field(default_factory=dict)
     # Отпечаток предыдущей версии батча (если есть)
     previous_version: str = field(default_factory=str)
     
@@ -437,117 +635,12 @@ class BatchMeta:
 
         return batch
 
-
-
-    def add_file2batch(self, src: SourceFileMeta) -> None:
-        """
-        Добавляет SourceFileMeta в соответствующий поднабор (fast5/pod5 + pass/fail).
-        Ожидается, что src.symlink уже установлен.
-        """
-        file_added:bool = False
-        if src.symlink not in self.files.files:
-            file_added = self.files.add2file_set(src.symlink, src.fingerprint, src.extension,
-                                                 src.size, src.quality_pass)
-
-        if file_added:
-            src_file_metadata = {}
-            val_unknown = 'unknown'
-            
-            # Добавляем образец, к которому относится файл, к списку образцов
-            self.samples.add(src.sample)
-            # Обновляем дату последнего изменения батча
-            self.modified = max_datetime(self.modified, src.modified)
-            self.size += src.size
-            # Обновляем отпечаток объекта, сохраняя в нём отпечаток добавленного файла
-            self._fingerprint = update_fingerprint(
-                                                  main_fingerprint=self._fingerprint,
-                                                  fingerprint2add=src.fingerprint
-                                                  )
-           
-            # Проверяем, не пора ли нам добрать метадату (есть хотя бы 3 файла на чтение и метадату еще не читали)
-            if all([not self.metadata_observed, len(self.files.files)>2]):
-                #Определяем 3 кандидатов для чтения метадаты по наименьшему размеру (важно при необходимости конвертации исходника)
-                candidates = sorted(list(self.files.files), key=lambda f: f.stat().st_size)[:3]
-                # Пытаемся отобрать метадату, пробуя набрать максимум данных. В случае наличия неизвестных пробуем следующего кандидата
-                for src_file in candidates:
-                    # сразу отметим файл как источник метаданных
-                    self.meta_gathered_from.append(src_file.as_posix())
-                    # Получаем данные из файла секвенирования
-                    try:
-                        src_file_metadata = parse_fast5_pod5_metadata(src_file.as_posix(), val_unknown)
-                        # Если в метадате не все переменные определены - берём следующий образец
-                        if val_unknown in src_file_metadata.values():
-                            continue
-                        else: break
-                    # Ловим ситуацию, когда файл куда-то делся
-                    except Exception:
-                        print(f"Trouble reading file: {src_file}")
-                
-                # Больше мы файлы батча для метадаты не трогаем    
-                self.metadata_observed = True
-                # Проверяем, что все данные в наличии, 
-                # особенно - версия поры и тип эксперимента.
-                # При отсутствии этих двух - отправляем батч на курацию
-                for meta_key in ['experiment_type',
-                                 'sequencing_kit',
-                                 'pore',
-                                 'flow_cell',
-                                 'created']:
-                    param_val = src_file_metadata[meta_key]
-                    
-                    # Проводим проверки меты, важной для будущей обработки
-                    if meta_key in ['experiment_type', 'pore']:
-                        if any([param_val == val_unknown, # значения должны быть известны
-                                (meta_key == 'pore' and param_val not in pore_data.keys()), # для поры есть референсные данные
-                                (meta_key == 'experiment_type' and param_val not in   # нужная молекула указана в данных поры
-                                             pore_data.get(src_file_metadata['pore'], {}).keys())
-                                ]):
-                            self.status = 'curation'
-                            self.unknowns[meta_key] = param_val
-
-                    elif meta_key == 'created':
-                        if isinstance(param_val, datetime):
-                            self.created = min_datetime(self.created, param_val)
-                        continue
-                    setattr(self, meta_key, param_val)
-
-
-    def edit_file_meta(self, edit_dict: Dict[Path, Dict[str, List[Any]]]) -> None:
-        # проходим по словарям изменений
-        for mod_data in edit_dict.values():
-            for prop, diffs in mod_data.items():
-                if prop == 'deleted':
-                    continue
-                old_val = diffs[0]
-                new_val = diffs[1]
-                if prop == "size":
-                    self.size += (new_val - old_val)
-                elif prop == "modified":
-                    if isinstance(new_val, datetime):
-                        self.modified = max_datetime(self.modified, new_val)
-                    else:
-                        logger.error(f"Неверный тип данных для изменения {prop} в батче {self.name}")
-                elif prop == "fingerprint":
-                    if isinstance(new_val, str):
-                        self._fingerprint = update_fingerprint(
-                                                              main_fingerprint=self._fingerprint,
-                                                              fingerprint2add=new_val
-                                                              )
-                    else:
-                        logger.error(f"Неверный тип данных для изменения {prop} в батче {self.name}")
-                
-
-    """# если раньше были unknowns, а версия обновилась — можно триггерить пересчёт на следующем цикле
-    def needs_reconcile(self, current_refs_version: str) -> bool:
-        return all([
-                   self.needs_curation,
-                   self.refs_version != current_refs_version
-                  ])"""
     def update_batch(
                         self,
-                        file_path:Path,
-                        file_diffs:dict,
-                        file_meta: Optional[SourceFileMeta] = None 
+                        change_type:str,
+                        file_meta: Optional[SourceFileMeta]=None,
+                        file_meta_dict:Optional[Dict[str, str|int|datetime]]=None,
+                        file_diffs:dict={}
                        ) -> bool:
         """
         Обновляет объект BatchMeta:
@@ -561,23 +654,176 @@ class BatchMeta:
         :param file_meta: объект SourceFileMeta
         :return: True, если батч был изменён
         """
+        batch_changed: bool = False
         logger.debug(f"Обновление батча {self.name}")
-        # Если файл был добавлен
         if file_meta:
-            logger.debug(f"  Добавление метаданных файла {file_meta.name}")
-            self.add_file2batch(file_meta)
-            return True
-        # Если файл был изменён:
-        # ...удалён...
-        if file_diffs.get('deleted', False):
-            logger.debug(f"  Удаление метаданных файла {file_path.as_posix()}")
-            pass
-            return True
-        # ...или модифицирован
-        else:
-            logger.debug(f"  Обновление метаданных файла {file_path.as_posix()}")
-            update_file_in_meta(self, file_path, file_diffs)
+            file_id = file_meta.symlink.as_posix()
+            # Если файл был добавлен
+            if change_type == "add":
+                logger.debug(f"  Добавление метаданных файла {file_id}")
+                batch_changed = self.add_file2batch(file_meta)
+        elif file_meta_dict:
+            file_id = Path(str(file_meta_dict['symlink']))
+            filepath = Path(str(file_meta_dict['filepath']))
+            # ...удалён...
+            if change_type == "delete":
+                logger.debug(f"  Удаление метаданных файла {file_id}")
+                batch_changed =  self.remove_file_from_batch(file_meta_dict)
+            # ...или модифицирован
+            elif change_type == "modify":
+                logger.debug(f"  Обновление метаданных файла {file_id}")
+                batch_changed =  update_file_in_meta(self, filepath, file_diffs)
+        return batch_changed
 
+    def add_file2batch(self, src: SourceFileMeta) -> bool:
+        """
+        Добавляет SourceFileMeta в соответствующий поднабор (fast5/pod5 + pass/fail).
+        Ожидается, что src.symlink уже установлен.
+        """
+        def _check_pod5_metadata() -> None:
+            """
+            Собирает данные из файла секвенирования, если не все метаданные батча (тип эксперимента, версия поры и т.д.) известны.  
+            """
+            src_file_metadata = {}
+            val_unknown = 'unknown'
+            # сразу отметим файл как источник метаданных
+            self.meta_gathered_from.append(src.symlink.as_posix())
+            # Получаем данные из файла секвенирования
+            try:
+                src_file_metadata = parse_fast5_pod5_metadata(src.symlink.as_posix(), val_unknown)
+            # Ловим ситуацию, когда файл куда-то делся
+            except Exception:
+                logger.error(f"Trouble reading file: {src.symlink}")
+            
+            # Если в метадате все переменные определены - ставим метку, что больше сбор метаданных батча не требуется
+            # либо мы исчерпали количество попыток (3)
+            if any([
+                    val_unknown not in src_file_metadata.values(),
+                    len(self.meta_gathered_from) > 2
+                    ]):
+                self.metadata_observed = True
+
+            # Проверяем, что все данные в наличии, 
+            # особенно - версия поры и тип эксперимента.
+            # При отсутствии этих двух - отправляем батч на курацию
+            for meta_key in ['experiment_type',
+                                'sequencing_kit',
+                                'pore',
+                                'flow_cell',
+                                'created']:
+                param_val = src_file_metadata[meta_key]
+                
+                # Проводим проверки меты, важной для будущей обработки
+                if meta_key in ['experiment_type', 'pore']:
+                    if any([param_val == val_unknown, # значения должны быть известны
+                            (meta_key == 'pore' and param_val not in pore_data.keys()), # для поры есть референсные данные
+                            (meta_key == 'experiment_type' and param_val not in   # нужная молекула указана в данных поры
+                                            pore_data.get(src_file_metadata['pore'], {}).keys())
+                            ]):
+                        self.status = 'curation'
+                        self.unknowns[meta_key] = param_val
+
+                elif meta_key == 'created':
+                    if isinstance(param_val, datetime):
+                        self.created = min_datetime(self.created, param_val)
+                    continue
+                setattr(self, meta_key, param_val)
+        
+        file_added:bool = False
+        if src.symlink not in self.files.files:
+            file_added = self.files.add2file_set(
+                                                 src.symlink,
+                                                 src.fingerprint,
+                                                 src.extension,
+                                                 src.size,
+                                                 src.quality_pass
+                                                )
+
+        if file_added:
+            # Добавляем образец, к которому относится файл, к списку образцов
+            self.samples.add(src.sample)
+            # Обновляем дату последнего изменения батча
+            self.modified = max_datetime(self.modified, src.modified)
+            self.size += src.size
+            # Обновляем отпечаток объекта, сохраняя в нём отпечаток добавленного файла
+            self._fingerprint = update_fingerprint(
+                                                   main_fingerprint=self._fingerprint,
+                                                   fingerprint2add=src.fingerprint
+                                                  )
+           
+            # Проверяем, не пора ли нам добрать метадату (есть хотя бы 3 файла на чтение и метадату еще не читали)
+            if not self.metadata_observed:
+                _check_pod5_metadata()
+            return True
+        else:
+            return False
+
+    def edit_file_meta(self, edit_dict: Dict[Path, Dict[str, List[Any]]]) -> bool:
+        """
+        Обновляет метаданные файла в батче.
+        Возвращает True, если батч был изменён
+        """
+        batch_changed: bool = False
+        # проходим по словарям изменений
+        for mod_data in edit_dict.values():
+            for prop, diffs in mod_data.items():
+                old_val = diffs[0]
+                new_val = diffs[1]
+                if old_val != new_val:
+                    batch_changed = True
+                if prop == "size":
+                    self.size += (new_val - old_val)
+                elif prop == "modified":
+                    if isinstance(new_val, datetime):
+                        self.modified = max_datetime(self.modified, new_val)
+                    else:
+                        logger.error(f"Неверный тип данных для изменения {prop} в батче {self.name}")
+                elif prop == "fingerprint":
+                    if isinstance(new_val, str):
+                        if not self._fingerprint:
+                            self._fingerprint = hashlib.blake2s()
+                            self._fingerprint.update(self.fingerprint.encode())
+                        self._fingerprint = update_fingerprint(
+                                                               main_fingerprint=self._fingerprint,
+                                                               fingerprint2add=new_val
+                                                              )
+                    else:
+                        logger.error(f"Неверный тип данных для изменения {prop} в батче {self.name}")
+        return batch_changed
+
+    def remove_file_from_batch(self, src: Dict[str, str|int|datetime]) -> bool:
+        file_removed: bool = False
+
+        meta_file_id = src['symlink']
+        file_size:int = src['size'] # type: ignore
+        if meta_file_id in self.files.files:
+            logger.debug(f"Удаление файла {meta_file_id} из батча {self.name}...")
+            file_removed = self.files.remove_from_fileset(
+                                                          Path(str(meta_file_id)),
+                                                          str(src['extension']),
+                                                          file_size,
+                                                          src['quality_pass'] # type: ignore
+                                                         ) 
+            if file_removed:
+                self.size -= file_size
+                self.modified = datetime.now()
+                self.changes[Path(meta_file_id)] = {'status':'deleted'}
+                logger.debug(f"Файл {meta_file_id} был удалён из батча {self.name}.")
+                # Обновляем отпечаток, убирая рандомные пару букв сурса
+                if not self._fingerprint:
+                    self._fingerprint = hashlib.blake2s()
+                    self._fingerprint.update(self.fingerprint.encode())
+                self._fingerprint = update_fingerprint(
+                                                       main_fingerprint=self._fingerprint,
+                                                       fingerprint2add=src['fingerprint'][1:] # type: ignore
+                                                      )
+                # Проверяем, остались ли ещё файлы. Если нет - помечаем батч как устаревший
+                if not self.files.files:
+                    logger.debug(f"Батч {self.name} пуст. Меняем статус на 'deprecated'...")
+                    self.status = 'deprecated'
+        else:
+            logger.error(f"Файл {meta_file_id} не найден в батче {self.name}!")
+        return file_removed
 
     def finalize(self):
         self.fingerprint = generate_final_fingerprint(self._fingerprint)
@@ -590,7 +836,7 @@ class BatchMeta:
 @dataclass(slots=True)
 class SampleMeta:
     """
-    !!!
+    Класс для хранения метаданных образцов.
     """
     # Определяем при инициализации 
     name: str
@@ -611,9 +857,15 @@ class SampleMeta:
     # Курирование метаданных
     status: str = field(default_factory=str)
     # сохраняем хэш референсов для триггера обновления данных
+    # данные TaskScheduler
+    # словарь вида {пайплайн: {id задания: статус}}
+    tasks: Dict[str, Dict[str, str]] = field(default_factory=dict)
     refs_version: str = field(default_factory=str)
-
-
+    # список изменений батчей и входящих в них файлов
+    changes: Dict[str, Dict[Path, Dict[str, int | datetime]]] = field(default_factory=dict)
+    # Отпечаток предыдущей версии батча (если есть)
+    previous_version: str = field(default_factory=str)
+    
     @staticmethod
     def from_db(doc: Dict[str, Any]) -> SampleMeta:
         """
@@ -635,7 +887,10 @@ class SampleMeta:
             modified=doc.get("modified"),
             fingerprint=doc.get("fingerprint", ""),
             status=doc.get("status", "indexed"),
-            refs_version=doc.get("refs_version", "")
+            tasks=doc.get("tasks", {}),
+            refs_version=doc.get("refs_version", ""),
+            changes=doc.get("changes", {}),
+            previous_version=doc.get("previous_version", ""),
         )
         
         # Восстанавливаем внутренний хэш-аккумулятор
@@ -645,51 +900,168 @@ class SampleMeta:
                                                      sample.fingerprint)
         
         return sample
+    
+    def _define_molecule_set(
+                             self,
+                             batch_meta:BatchMeta
+                            ) -> Optional[MoleculeData]:
+            # Определяем сет, в который пойдут файлы батча
+            if batch_meta.experiment_type=='dna':
+                return self.dna
+            elif batch_meta.experiment_type=='rna':
+                return self.rna
+            else:
+                logger.error(f"Батч {batch_meta.name}: Неизвестный experiment_type '{batch_meta.experiment_type}'")
+            return None
 
+    def _extract_curated_batch_meta(self,
+                                   batch_meta: BatchMeta,
+                                   file_metas: Dict[str, SourceFileMeta]
+                                  ) -> bool:
+        """
+        Извлекает метаданные батча, если он был курирован.
+        """
+        sample_changed:bool = False
+        if all([
+                batch_meta.status == 'indexed',
+                batch_meta.name in self.batches_unknown
+               ]):
+            self.batches_unknown.remove(batch_meta.name)
+            if len(self.batches_unknown) == 0:
+                self.status = 'indexed'
+            # Добавляем метадату батча в образец вместе с первым файлом
+            first_meta = file_metas.pop(str(next(iter(batch_meta.files.files))))
+            sample_changed = self.add_batch2sample(
+                                                   batch_meta=batch_meta,
+                                                   file_meta=first_meta
+                                                  )
+            molecule_set = self._define_molecule_set(batch_meta)
+            for file in batch_meta.files.files:
+                file_meta = file_metas.get(str(file))
+                if file_meta:
+                    # Мы делаем эту проверку просто, чтобы зарегистрировать любое изменение и более не трогать этот флаг
+                    if sample_changed:
+                        self.add_file2sample(
+                                             batch_meta=batch_meta,
+                                             file_meta=file_meta,
+                                             molecule_set=molecule_set # type: ignore
+                                            )
+                    else:
+                        sample_changed = self.add_file2sample(
+                                                              batch_meta=batch_meta,
+                                                              file_meta=file_meta,
+                                                              molecule_set=molecule_set # type: ignore
+                                                             )
+        return sample_changed
+
+    def update_sample(
+                        self,
+                        change_type:str,
+                        batch_meta: BatchMeta,
+                        file_meta: Optional[SourceFileMeta]=None,
+                        file_meta_dict:Optional[Dict[str, str|int|datetime]]=None,
+                        file_diffs:dict={}
+                       ) -> bool:
+        """
+        Обновляет объект SampleMeta:
+        - если файл был добавлен — проводит процедуру добавления меты файла в образец
+        - если файл был удалён — удаляет его метаданные из образца
+        - если файл был изменён — обновляет его метаданные в образце
+        Возвращает True, если образец был изменён
+
+        :param file_path: путь к файлу
+        :param file_diffs: словарь с изменениями файла
+        :param file_meta: объект SourceFileMeta
+        :return: True, если образец был изменён
+        """
+        sample_changed: bool = False
+        molecule_set = self._define_molecule_set(batch_meta)
+        logger.debug(f"Обновление образца {self.name}")
+        # Если файл был добавлен
+        if file_meta:
+            file_id = file_meta.symlink.as_posix()
+            if change_type == "add":
+                logger.debug(f"  Добавление метаданных файла {file_id}")
+                # Проверяем наличие батча в образце, если его нет — добавляем
+                if all([
+                        batch_meta.name not in self.batches,
+                        batch_meta.name not in self.batches_unknown
+                       ]
+                      ):
+                    sample_changed = self.add_batch2sample(
+                                                        batch_meta=batch_meta,
+                                                        file_meta=file_meta
+                                                        )
+                # Если батч был добавлен и с его метой всё ок — добавляем файл
+                elif batch_meta.name in self.batches:
+                    if molecule_set:
+                        sample_changed = self.add_file2sample(
+                                                            batch_meta=batch_meta,
+                                                            file_meta=file_meta,
+                                                            molecule_set=molecule_set # type: ignore
+                                                            )
+                # (если же батч нуждается в курации — все его файлы будут добавлены позже)
+        elif file_meta_dict:
+            file_id = str(file_meta_dict['symlink'])
+            if batch_meta.name in self.batches:
+                # ...удалён...
+                if change_type == "delete":
+                    if molecule_set:
+                        logger.debug(f"  Удаление метаданных файла {file_id}")
+                        sample_changed =  self.remove_file_from_sample(
+                                                                       file_meta_dict,
+                                                                       molecule_set,
+                                                                       pore=batch_meta.pore
+                                                                       )
+                # ...или модифицирован
+                elif change_type == "modify":
+                    logger.debug(f"  Обновление метаданных файла {file_id}")
+                    sample_changed =  update_file_in_meta(
+                                                          self,
+                                                          Path(str(file_meta_dict['filepath'])),
+                                                          file_diffs
+                                                         )
+            elif batch_meta.name in self.batches_unknown:
+                logger.debug(f"  Удаление метаданных файла {file_id} не произведено: батч {batch_meta.name} на курации")
+        return sample_changed
 
     def add_batch2sample(self,
-                         src: BatchMeta,
-                         files_meta: Dict[str, SourceFileMeta]
-                        ) -> None:
+                         batch_meta: BatchMeta,
+                         file_meta: SourceFileMeta
+                        ) -> bool:
+        sample_changed: bool = False
         # Обновляем даты последних изменения и создания батча
-        self.created = min_datetime(self.created, src.created)
-        self.modified = max_datetime(self.modified, src.modified)
+        self.created = min_datetime(self.created, batch_meta.created)
+        self.modified = max_datetime(self.modified, batch_meta.modified)
 
-        self.batches.add(src.name)
+        if batch_meta.name not in self.batches:
+            self.batches.add(batch_meta.name)
+            sample_changed = True
         # Проверяем, нуждается ли батч в курации метаданных
-        if src.status == 'curation':
+        if batch_meta.status == 'curation':
             self.status = 'curation'
-            self.batches_unknown.add(src.name)
+            if batch_meta.name in self.batches_unknown:
+                self.batches_unknown.add(batch_meta.name)
+                sample_changed = True
         else:
-            # Определяем сет, в который пойдут файлы батча
-            if src.experiment_type=='dna':
-                molecule_set = self.dna
-            elif src.experiment_type=='rna':
-                molecule_set = self.rna
-            else:
-                logger.warning(f"Батч {src.name}: Неизвестный experiment_type '{src.experiment_type}'")
-                molecule_set = False
+            molecule_set = self._define_molecule_set(batch_meta)
             if molecule_set:
-                sample_files = [file for file in src.files.files
-                                if self.name in file.name]
                 # Если все параметры батча на месте - добавляем файлы
-                for file in sample_files:
-                    file_meta = files_meta[file.as_posix()]
-                    if self.add_file2sample(file=file, batch_meta=src, file_meta=file_meta, molecule_set=molecule_set):
-                        self.files.add(file)
+                if self.add_file2sample(
+                                        batch_meta=batch_meta,
+                                        file_meta=file_meta,
+                                        molecule_set=molecule_set
+                                       ):
+                    self.files.add(file_meta.symlink)
+                    sample_changed = True
                     
-        self._fingerprint = update_fingerprint(
-                                                main_fingerprint=self._fingerprint,
-                                                fingerprint2add=src.fingerprint
-                                                )
         # Если до этого у сэмпла не было статуса - ставим 'indexed'
         if not self.status:
             self.status = 'indexed'
-        
+        return sample_changed        
 
     def add_file2sample(self,
                         batch_meta: BatchMeta,
-                        file:Path,
                         file_meta:SourceFileMeta,
                         molecule_set:MoleculeData
                        ) -> bool:
@@ -700,6 +1072,7 @@ class SampleMeta:
         параметру needs_curation)
         """
         file_added:bool = False
+        file:Path = file_meta.symlink
         # Проверяем, что файл не добавлен ранее
         if file not in self.files:
             file_added = molecule_set.add2molecule_set(file=file,
@@ -712,17 +1085,21 @@ class SampleMeta:
             if file_added:
                 self.files.add(file)
                 self.size += file_meta.size
+                self._fingerprint = update_fingerprint(
+                                                       main_fingerprint=self._fingerprint,
+                                                       fingerprint2add=file_meta.fingerprint
+                                                      )
         return file_added
 
-
-    def edit_file_meta(self, edit_dict: Dict[Path, Dict[str, List[Any]]]) -> None:
+    def edit_file_meta(self, edit_dict: Dict[Path, Dict[str, List[Any]]]) -> bool:
+        sample_changed: bool = False
         # проходим по словарям изменений
         for mod_data in edit_dict.values():
             for prop, diffs in mod_data.items():
-                if prop == 'deleted':
-                    continue
                 old_val = diffs[0]
                 new_val = diffs[1]
+                if old_val != new_val:
+                    sample_changed = True
                 if prop == "size":
                     self.size += (new_val - old_val)
                 elif prop == "modified":
@@ -738,8 +1115,47 @@ class SampleMeta:
                                                               )
                     else:
                         logger.error(f"Неверный тип данных для изменения {prop} в образце {self.name}")
-  
-
+        return sample_changed
+    
+    def remove_file_from_sample(
+                                self,
+                                file_meta_dict:Dict[str, str|int|datetime|bool],
+                                molecule_set:MoleculeData,
+                                pore:str
+                               ) -> bool:
+        file_removed: bool = False
+        if file_meta_dict:
+            file_id = str(file_meta_dict['symlink'])
+            file_size = int(file_meta_dict['size']) # type: ignore
+            # Проверяем, что файл есть в сэмпле
+            if file_id in self.files:
+                file_removed = molecule_set.remove_file_from_molecule_set(
+                                                                          file=Path(file_id),
+                                                                          pore=pore,
+                                                                          extension=str(file_meta_dict['extension']),
+                                                                          size=file_size,
+                                                                          qc_pass=bool(file_meta_dict['quality_pass'])
+                                                                         )
+                if file_removed:
+                    self.files.remove(file_id)
+                    self.size -= file_size
+                    self.modified = datetime.now()
+                    if not self._fingerprint:
+                        self._fingerprint = hashlib.blake2s()
+                        self._fingerprint = update_fingerprint(
+                                                               self._fingerprint,
+                                                               str(file_meta_dict['fingerprint'])[1:]
+                                                              )
+                    # Помечаем образец как неактуальный, если у него не осталось файлов И батчей на курации
+                    if not any([
+                                self.batches_unknown,
+                                self.files
+                               ]
+                              ):
+                        self.status = 'deprecated'
+            else:
+                logger.error(f"Файл {file_id} не найден в образце {self.name}")
+        return file_removed
 
     def finalize(self):
         self.refs_version = refs_version['pore_data']
@@ -1014,26 +1430,25 @@ def update_file_in_meta(
     meta_obj: Union[BatchMeta, SampleMeta],
     file_path: Path,
     diff: Dict[str, List[Any]]
-) -> None:
+) -> bool:
     """
     Обновляет структуры в BatchMeta/SampleMeta при изменении файла.
+    Возвращает True, если какие-то метаданные были изменены.
     
     :param meta_obj: Объект BatchMeta или SampleMeta.
     :param file_id: Путь к изменённому файлу.
     :param diff: Словарь изменений {size: [old, new], modified: [old, new]}.
     :return: None
     """
-    # Находим все структуры, где файл присутствует
-    containing_structures = _find_containing_structures(meta_obj, file_path) # type: ignore
-    # обновляем их
-    for structure in containing_structures:
-        structure.edit_file_meta({file_path: diff})
-    # !!! дальше пишем функции edit для всех структур !!!
-
     def _find_containing_structures(
                                     meta_obj: Union[BatchMeta, SampleMeta],
                                     file_path: Path
-                                   ) -> List[Any]:
+                                   ) -> List[BatchMeta|
+                                             SampleMeta|
+                                             MoleculeData|
+                                             FileSet|
+                                             FileSubset|
+                                             FileGroup]:
         """
         Находит все структуры в объекте, где присутствует файл.
         """
@@ -1041,15 +1456,17 @@ def update_file_in_meta(
         fileset_containing_structure:Union[BatchMeta, PoreSet]
         subset:FileSubset
         filegroup:FileGroup
-        structures:List[Union[BatchMeta,
-                              SampleMeta,
-                              MoleculeData,
-                              FileSet,
-                              FileSubset,
-                              FileGroup]] = []
+        structures:List[
+                        BatchMeta|
+                        SampleMeta|
+                        MoleculeData|
+                        FileSet|
+                        FileSubset|
+                        FileGroup
+                       ]
         
         # добавляем сам объект в список структур
-        structures.append(meta_obj)
+        structures = [meta_obj]
         # спускаемся по дереву атрибутов к объекту FileSet, содержащему файл (для BatchMeta и SampleMeta спуск разный)
         if isinstance(meta_obj, BatchMeta):
             fileset_containing_structure =  meta_obj
@@ -1072,3 +1489,14 @@ def update_file_in_meta(
                     structures.append(subset)
                     structures.append(subset.__getattribute__(attr_name))
         return structures
+
+    # Находим все структуры, где файл присутствует
+    containing_structures = _find_containing_structures(meta_obj, file_path) # type: ignore
+    # обновляем их
+    meta_changed = []
+    for structure in containing_structures:
+        meta_changed.append(structure.edit_file_meta({file_path: diff}))
+        if meta_changed[-1]:
+            logger.debug(f"Изменена структура: {type(structure)}")
+    return any([f for f in meta_changed])
+

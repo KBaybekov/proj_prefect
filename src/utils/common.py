@@ -164,7 +164,6 @@ def get_duration(duration_sec:float=0, start_time:float=0, cpu_start_time:float=
     end_datetime = datetime.now().strftime("%d.%m.%Y %H:%M:%S")
     return (duration_sec, time_str, cpu_duration, end_datetime)
 
-
 def convert_secs_to_dhms(secs:int, precision:str='s') -> str:
     """
     Конвертирует секунды в удобочитаемый формат (дни/часы/минуты/секунды).
@@ -195,14 +194,11 @@ def convert_secs_to_dhms(secs:int, precision:str='s') -> str:
         time_str = (f'< 1{precision}')
     return time_str
 
-
 def max_datetime(a: Optional[datetime], b: Optional[datetime]) -> Optional[datetime]:
     return b if a is None or (b and b > a) else a
 
-
 def min_datetime(a: Optional[datetime], b: Optional[datetime]) -> Optional[datetime]:
     return b if a is None or (b and b < a) else a
-
 
 def load_yaml(
               file_path:Path,
@@ -259,7 +255,6 @@ def load_yaml(
         logger.debug(f"Пустой словарь из YAML {file_path}")
     return data
   
-
 def save_yaml(filename:str, path:str, data:dict) -> str:
     """
     Сохраняет словарь в файл в формате YAML. Возвращает полный путь нового файла.

@@ -52,14 +52,6 @@ collections:
         unique: true
         keys: [["fingerprint", "ASC"]]
 
-  changes:
-    indexes:
-      - name: ix_name
-        keys: [["name", "ASC"]]
-      - name: ix_fingerprint
-        unique: true
-        keys: [["fingerprint", "ASC"]]
-
   human:
     indexes:
       - name: ix_sample

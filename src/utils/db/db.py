@@ -54,7 +54,6 @@ def _normalize(value: Any) -> Any:
     return value
 
 
-
 def _dir_from_str(s: str) -> int:
     s = s.strip().upper()
     if s == "ASC":
@@ -101,7 +100,6 @@ def to_mongo(obj: Any, *, keep_empty: bool = True) -> Any:
     return str(obj)
 
 
-
 @dataclass  
 class ConfigurableMongoDAO:
     """Универсальный DAO с динамическими коллекциями и ensure_indexes()."""
@@ -120,8 +118,6 @@ class ConfigurableMongoDAO:
             logger.debug(f"Проверяем индексы в {self.collections_config.keys()}")
             self.ensure_indexes()
 
-
-
     def ensure_indexes(self) -> None:
         """Идёмпотентно создаём индексы по конфигу YAML."""
         for coll_name, cfg in self.collections_config.items():
@@ -136,40 +132,103 @@ class ConfigurableMongoDAO:
                     kwargs["name"] = name
                 coll.create_index(keys, **kwargs)
 
+    def insert_many(
+                    self,
+                    collection: str,
+                    documents: List[Dict[str, Any]]
+                   ) -> None:
+        """
+        Вставляет множество новых документов в указанную коллекцию.
+        
+        :param collection: Название коллекции.
+        :param documents: Список документов для вставки.
+        """
+        coll: pymongo.collection.Collection # type: ignore
+        coll = getattr(self, collection)
+        if not documents:
+            logger.debug(f"Нет документов для вставки в коллекцию {collection}")
+            return None
+        
+        # Нормализуем и вставляем
+        normalized_docs = [_normalize(doc) for doc in documents]
+        result = coll.insert_many(normalized_docs)
+        logger.info(f"Добавлено {len(result.inserted_ids)} новых документов в коллекцию {collection}")
 
-    def upsert(self, collection: str, key: Dict[str, Any], doc: Dict[str, Any]) -> None:
+    def update_many(
+                    self,
+                    collection: str,
+                    query: Dict[str, Any],
+                    doc: Dict[str, Any]
+                   ) -> None:
+        """
+        Обновляет/вставляет множество документов в указанной коллекции.
+        
+        :param collection: Название коллекции.
+        :param updates: Словарь вида {query: document}, где:
+            - query: фильтр для поиска документа (аналог MongoDB query).
+            - document: данные для обновления/вставки.
+        """
+        coll: pymongo.collection.Collection # type: ignore
+        coll = getattr(self, collection)
+        normalized_doc:Dict[str, Any] = _normalize(doc)
+        now = datetime.now(timezone.utc)
+        # Добавляем временные метки
+        normalized_doc.setdefault("updated_at_DB", now)
+            
+        # Используем $setOnInsert для установки created_at_DB при вставке
+        result = coll.update_many(
+                                  filter=query,
+                                  update={
+                                          "$set": normalized_doc,
+                                          "$setOnInsert": {"created_at_DB": now}
+                                         }
+                                 )
+        logger.debug(f"Подходящих записей: {result.matched_count}. Обновлено {result.modified_count} записей в коллекцию {collection}")
+
+    def update_one(
+                   self,
+                   collection: str,
+                   query: Dict[str, Any],
+                   doc: Dict[str, Any]
+                  ) -> None:
+        """
+        Обновляет один документ в указанной коллекции.
+
+        :param collection: Название коллекции.
+        :param query: Фильтр для поиска документа (аналог MongoDB query).
+        :param doc: Данные для обновления.
+        """ 
+        coll: pymongo.collection.Collection # type: ignore
+        coll = getattr(self, collection)
+        normalized_doc:Dict[str, Any] = _normalize(doc)
+        now = datetime.now(timezone.utc)
+        # Добавляем временные метки
+        normalized_doc.setdefault("updated_at_DB", now)
+        result = coll.update_one(
+                                 filter=query,
+                                 update={"$set": normalized_doc}
+                                 )
+        if result.modified_count != 1:
+            logger.error(f"При попытке обновления одного документа обновлено: {result.modified_count}.\nЗапрос: {query}.\nДанные: {doc}")
+        else:
+            logger.debug(f"Успешно обновлен 1 документ при запросе {query}.\nДанные: {doc}")
+
+    def upsert_one(
+                   self,
+                   collection: str,
+                   key: Dict[str, Any],
+                   doc: Dict[str, Any]
+                  ) -> None:
+        """
+        Обновляет или создаёт новый документ в указанной коллекции.
+        """
         coll: pymongo.collection.Collection # type: ignore
 
         coll = getattr(self, collection)
-        d = _normalize(doc)
-        #d = to_mongo(doc)
+        d: Dict[str, Any] = _normalize(doc)
         now = datetime.now(timezone.utc)
         d.setdefault("updated_at_DB", now)
         coll.update_one(key, {"$set": d, "$setOnInsert": {"created_at_DB": now}}, upsert=True)
-
-
-    def update_one(self, collection: str, key: Dict[str, Any], doc: Dict[str, Any]) -> None:
-        """
-        Обновляет существующий документ в указанной коллекции.
-        
-        Args:
-            collection: Название коллекции.
-            key: Фильтр для поиска документа (аналог MongoDB query).
-            doc: Данные для обновления (аналог MongoDB $set).
-        """
-        coll: pymongo.collection.Collection # type: ignore
-        
-        coll = getattr(self, collection)
-        d = _normalize(doc)  # Рекурсивная нормализация данных
-        now = datetime.now(timezone.utc)
-        
-        # Добавляем/обновляем временную метку последнего изменения
-        d["updated_at_DB"] = now
-        
-        # Выполняем обновление первого совпадающего документа
-        coll.update_one(key, {"$set": d})
-        logger.debug(f"Обновлено в {collection}: {key} -> {doc}")
-
 
     def find(self,
              collection: str,
@@ -179,6 +238,7 @@ class ConfigurableMongoDAO:
             ) -> List[Dict[str, Any]]:
         """
         Ищет документы в указанной коллекции.
+
         :param collection: Название коллекции.
         :param query: Фильтр для поиска документов (аналог MongoDB query).
         :param projection: Поля для выборки (аналог MongoDB projection).
@@ -190,14 +250,14 @@ class ConfigurableMongoDAO:
         cur = coll.find(_normalize(query), projection, limit=limit)
         return list(cur)
 
-
     def find_one(self,
                  collection: str,
                  query: Dict[str, Any],
                  projection: Optional[Dict[str, int]] = None
-                ) -> Optional[Dict[str, Any]]:
+                ) -> Dict[str, Any]:
         """
         Ищет один документ в указанной коллекции.
+
         :param collection: Название коллекции.
         :param query: Фильтр для поиска документа (аналог MongoDB query).
         :param projection: Поля для выборки (аналог MongoDB projection).
@@ -208,24 +268,42 @@ class ConfigurableMongoDAO:
         obj = coll.find_one(_normalize(query), projection)
         if not obj:
             logger.debug(f"Не найдено в {collection}: {query}")
+            return {}
         return obj
+    
+    def delete_one(
+               self,
+               collection: str,
+               query: Dict[str, Any]
+              ) -> None:
+        """
+        Удаляет один документ из указанной коллекции по фильтру.
 
+        :param collection: Название коллекции.
+        :param query: Фильтр для поиска документа (аналог MongoDB query).
+        """
+        coll: pymongo.collection.Collection = getattr(self, collection) # type: ignore
+        result = coll.delete_one(_normalize(query))
+        
+        if result.deleted_count == 1:
+            logger.debug(f"Успешно удалён 1 документ из коллекции {collection} при запросе {query}")
+        elif result.deleted_count == 0:
+            logger.debug(f"Нет документов для удаления в коллекции {collection} при запросе {query}")
+        else:
+            logger.warning(f"Неожиданное количество удалённых документов ({result.deleted_count}) в коллекции {collection}")
 
-def init_db(cfg:Dict[str, Any]) -> ConfigurableMongoDAO:
-    """Возвращает сконфигурированный DAO (используется в инициализации)."""
-    uri = cfg["db_host"]
-    db_user = cfg["db_user"]
-    db_pass = cfg["db_password"]
-    db_name = cfg["db_name"]
-    db_cfg_path = Path(cfg["db_config_path"] or Path(__file__).parent / "config/db_config.yaml")
-    collections_cfg = _load_db_config_yaml(db_cfg_path)
-
+def get_mongo_client(
+                     uri:str,
+                     db_user:str,
+                     db_pass:str,
+                     db_name:str
+                    ) -> MongoClient:
     client = MongoClient(uri, username=db_user, password=db_pass, serverSelectionTimeoutMS=2000)
     try:
         client.admin.command("ping")
     except pymongo.errors.ServerSelectionTimeoutError: # type: ignore
         raise ValueError('DB unavailable')
-    return ConfigurableMongoDAO(client=client, db_name=db_name, collections_config=collections_cfg)
+    return client
 
 def _load_db_config_yaml(path: Path) -> Dict[str, Dict[str, Any]]:
     """Читаем config/db_config.yaml и собираем структуру индексов."""
