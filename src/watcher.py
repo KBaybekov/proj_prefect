@@ -90,8 +90,8 @@ def init_scheduler(
                    pipeline_cfg:Dict[str, Dict[str, Any]]
                   ) -> TaskScheduler:
     slurm_poll_interval = cfg.get("slurm_poll_interval", 60)
-    scheduler = TaskScheduler(dao, slurm_poll_interval, pipeline_cfg)
-    scheduler.init_scheduler()
+    scheduler = TaskScheduler(dao, slurm_poll_interval)
+    scheduler.init_scheduler(pipeline_cfg)
     return scheduler
 
 @flow(name="Watchdog")

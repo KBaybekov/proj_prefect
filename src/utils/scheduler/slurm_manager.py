@@ -1,7 +1,7 @@
 import time
 import subprocess
 from datetime import datetime, timezone
-from typing import Dict, IO, List, Optional, Union
+from typing import Any, Dict, IO, List, Optional, Union
 from pymongo.collection import Collection
 from utils.logger import get_logger
 from shlex import split as shlex_split
@@ -10,18 +10,35 @@ from shlex import split as shlex_split
 logger = get_logger(__name__)
 
 class SlurmManager:
-    def __init__(self):
-        self.check_slurm_existence()
-        # пропиши путь к template
-        #self.
+    def __init__(
+                 self,
+                 slurm_user: str
+                ):
+        self.user = slurm_user
+        self._check_connection()
         return
 
-    def check_slurm_existence(self) -> None:
+    def _check_connection(self) -> None:
         if self.run_subprocess(["which", "sbatch"]).returncode == 0:
-            logger.info("Slurm доступен.")
+            logger.debug("Slurm доступен.")
         else:
             logger.error("Slurm не доступен.")
             raise Exception("Slurm не доступен.")
+        
+    def _get_queued_tasks_data(
+                               self
+                              ) -> Dict[str, Dict[str, Any]]:
+        """
+        Получает информацию о заданиях, находящихся в очереди Slurm.
+        Возвращает словарь с информацией о заданиях.
+        """
+        data = self.run_subprocess(
+                                   cmd=[
+                                        "squeue",
+                                        "--user", self.user,
+                                        "json"
+                                   ]
+                                  )
     
     def submit_to_slurm(self, job_script: str, job_name: str, resources: Dict[str, Any]) -> str:
         """Отправляет задание в Slurm и возвращает ID задачи."""

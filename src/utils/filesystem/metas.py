@@ -90,7 +90,6 @@ class FileSubset:
     pass_: FileGroup = field(default_factory=FileGroup)
     fail:  FileGroup = field(default_factory=FileGroup)
 
-
     @staticmethod
     def from_db(doc: Dict[str, Any]) -> FileSubset:
         """
@@ -194,6 +193,26 @@ class FileSet:
                         pod5=FileSubset.from_db(doc.get("pod5", {})),
                         fq=FileSubset.from_db(doc.get("fq", {}))
                         )
+
+    def _file_added_to_fileset(
+                               self,
+                               file: Path,
+                               fingerprint:str,
+                               extension: str,
+                               size: int,
+                               qc_pass: bool
+                              ) -> bool:
+        if file in self.files:
+            return False
+        else:
+            file_added = self.add2file_set(
+                                           file,
+                                           fingerprint,
+                                           extension,
+                                           size,
+                                           qc_pass
+                                          )
+            return file_added
 
     def add2file_set(self, file: Path, fingerprint:str, extension: str, size: int, qc_pass: bool) -> bool:
         """
@@ -570,16 +589,8 @@ class BatchMeta:
     name: str
     final_summary: Path
     sequencing_summary: Path
-    # Определяем через парсинг fast5/pod5
-    meta_gathered_from: List[str] = field(default_factory=list)
-    experiment_type: str = field(default_factory=str)
-    flow_cell: str = field(default_factory=str)
-    sequencing_kit: str = field(default_factory=str)
-    pore: str = field(default_factory=str)
     created: Optional[datetime] = field(default=None)
     modified: Optional[datetime] = field(default=None)
-    #created: Optional[datetime] = field(default=None, init=False)
-    #modified: Optional[datetime] = field(default=None, init=False)
     # Определяем по ходу наполнения батча файлами
     fingerprint: str = field(default_factory=str)
     files: FileSet = field(default_factory=FileSet)
@@ -589,9 +600,6 @@ class BatchMeta:
     _fingerprint: hashlib.blake2s = field(default_factory=hashlib.blake2s)
     # Курирование метаданных
     status: str = field(default_factory=str)
-    # В unknowns указываются неизвестные ячейка/химия
-    metadata_observed: bool = field(default=False)
-    unknowns: Dict[str, str] = field(default_factory=dict)
     # Сразу проверяем, что в data/pore_data.yaml есть нужные данные по поре/молекуле
     refs_version: str = field(default_factory=str)
     # Список изменений в батче по сравнению с предыдущей версией (файл:изменения)
@@ -613,18 +621,11 @@ class BatchMeta:
             name=doc.get("name", ""),
             final_summary=Path(doc.get("final_summary", "")),
             sequencing_summary=Path(doc.get("sequencing_summary", "")),
-            meta_gathered_from=doc.get("meta_gathered_from", []),
-            experiment_type=doc.get("experiment_type", ""),
-            flow_cell=doc.get("flow_cell", ""),
-            sequencing_kit=doc.get("sequencing_kit", ""),
-            pore=doc.get("pore", ""),
             created=doc.get("created"),
             modified=doc.get("modified"),
             fingerprint=doc.get("fingerprint", ""),
             samples=set(doc.get("samples", [])),
             status=doc.get("status", "indexed"),
-            metadata_observed=doc.get("metadata_observed", False),
-            unknowns=doc.get("unknowns", {}),
             refs_version=doc.get("refs_version", ""),
             changes=doc.get("changes", {}),
             previous_version=doc.get("previous_version", ""),
@@ -680,80 +681,24 @@ class BatchMeta:
         Добавляет SourceFileMeta в соответствующий поднабор (fast5/pod5 + pass/fail).
         Ожидается, что src.symlink уже установлен.
         """
-        def _check_pod5_metadata() -> None:
-            """
-            Собирает данные из файла секвенирования, если не все метаданные батча (тип эксперимента, версия поры и т.д.) известны.  
-            """
-            src_file_metadata = {}
-            val_unknown = 'unknown'
-            # сразу отметим файл как источник метаданных
-            self.meta_gathered_from.append(src.symlink.as_posix())
-            # Получаем данные из файла секвенирования
-            try:
-                src_file_metadata = parse_fast5_pod5_metadata(src.symlink.as_posix(), val_unknown)
-            # Ловим ситуацию, когда файл куда-то делся
-            except Exception:
-                logger.error(f"Trouble reading file: {src.symlink}")
-            
-            # Если в метадате все переменные определены - ставим метку, что больше сбор метаданных батча не требуется
-            # либо мы исчерпали количество попыток (3)
-            if any([
-                    val_unknown not in src_file_metadata.values(),
-                    len(self.meta_gathered_from) > 2
-                    ]):
-                self.metadata_observed = True
-
-            # Проверяем, что все данные в наличии, 
-            # особенно - версия поры и тип эксперимента.
-            # При отсутствии этих двух - отправляем батч на курацию
-            for meta_key in ['experiment_type',
-                                'sequencing_kit',
-                                'pore',
-                                'flow_cell',
-                                'created']:
-                param_val = src_file_metadata[meta_key]
-                
-                # Проводим проверки меты, важной для будущей обработки
-                if meta_key in ['experiment_type', 'pore']:
-                    if any([param_val == val_unknown, # значения должны быть известны
-                            (meta_key == 'pore' and param_val not in pore_data.keys()), # для поры есть референсные данные
-                            (meta_key == 'experiment_type' and param_val not in   # нужная молекула указана в данных поры
-                                            pore_data.get(src_file_metadata['pore'], {}).keys())
-                            ]):
-                        self.status = 'curation'
-                        self.unknowns[meta_key] = param_val
-
-                elif meta_key == 'created':
-                    if isinstance(param_val, datetime):
-                        self.created = min_datetime(self.created, param_val)
-                    continue
-                setattr(self, meta_key, param_val)
-        
-        file_added:bool = False
-        if src.symlink not in self.files.files:
-            file_added = self.files.add2file_set(
-                                                 src.symlink,
-                                                 src.fingerprint,
-                                                 src.extension,
-                                                 src.size,
-                                                 src.quality_pass
-                                                )
-
-        if file_added:
+        if self.files._file_added_to_fileset(
+                                             src.symlink,
+                                             src.fingerprint,
+                                             src.extension,
+                                             src.size,
+                                             src.quality_pass
+                                            ):
             # Добавляем образец, к которому относится файл, к списку образцов
             self.samples.add(src.sample)
-            # Обновляем дату последнего изменения батча
+            # Обновляем дату создания и последнего изменения батча
+            self.created = min_datetime(self.created, src.created)
             self.modified = max_datetime(self.modified, src.modified)
             self.size += src.size
             # Обновляем отпечаток объекта, сохраняя в нём отпечаток добавленного файла
             self._fingerprint = update_fingerprint(
                                                    main_fingerprint=self._fingerprint,
                                                    fingerprint2add=src.fingerprint
-                                                  )
-           
-            # Проверяем, не пора ли нам добрать метадату (есть хотя бы 3 файла на чтение и метадату еще не читали)
-            if not self.metadata_observed:
-                _check_pod5_metadata()
+                                                  )         
             return True
         else:
             return False
@@ -840,12 +785,9 @@ class SampleMeta:
     """
     # Определяем при инициализации 
     name: str
-    files: Set[Path] = field(default_factory=set)
+    files: FileSet = field(default_factory=FileSet)
     # Наполняем после прохода по всем файлам
     batches: Set[str] = field(default_factory=set)
-    batches_unknown: Set[str] = field(default_factory=set)
-    dna : MoleculeData = field(default_factory=MoleculeData)
-    rna : MoleculeData = field(default_factory=MoleculeData)
     size: int = 0
     # Определяем по метаданным батчей, в которых присутствует образец
     created: Optional[datetime] = field(default=None)
@@ -854,12 +796,14 @@ class SampleMeta:
     fingerprint: str = field(default_factory=str)
     # внутренний хэш-аккумулятор для fingerprint
     _fingerprint: hashlib.blake2s = field(default_factory=hashlib.blake2s)
-    # Курирование метаданных
-    status: str = field(default_factory=str)
-    # сохраняем хэш референсов для триггера обновления данных
+        
     # данные TaskScheduler
     # словарь вида {пайплайн: {id задания: статус}}
     tasks: Dict[str, Dict[str, str]] = field(default_factory=dict)
+    
+    # История изменений
+    status: str = field(default_factory=str)
+    # сохраняем хэш референсов для триггера обновления данных
     refs_version: str = field(default_factory=str)
     # список изменений батчей и входящих в них файлов
     changes: Dict[str, Dict[Path, Dict[str, int | datetime]]] = field(default_factory=dict)
@@ -1071,25 +1015,22 @@ class SampleMeta:
         файл не добавляется, зато имя батча добавляется в batches_unknown (с присвоением True
         параметру needs_curation)
         """
-        file_added:bool = False
-        file:Path = file_meta.symlink
-        # Проверяем, что файл не добавлен ранее
-        if file not in self.files:
-            file_added = molecule_set.add2molecule_set(file=file,
-                                                       fingerprint=file_meta.fingerprint,
-                                                       molecule=batch_meta.experiment_type,
-                                                       pore=batch_meta.pore,
-                                                       extension=file_meta.extension,
-                                                       size=file_meta.size,
-                                                       qc_pass=file_meta.quality_pass)
-            if file_added:
-                self.files.add(file)
-                self.size += file_meta.size
-                self._fingerprint = update_fingerprint(
-                                                       main_fingerprint=self._fingerprint,
-                                                       fingerprint2add=file_meta.fingerprint
-                                                      )
-        return file_added
+
+        # Добавляем, если файл не добавлен ранее
+        if self.files._file_added_to_fileset(
+                                             file_meta.symlink,
+                                             file_meta.fingerprint,
+                                             file_meta.extension,
+                                             file_meta.size,
+                                             file_meta.quality_pass
+                                            ):
+            self.size += file_meta.size
+            self._fingerprint = update_fingerprint(
+                                                   main_fingerprint=self._fingerprint,
+                                                   fingerprint2add=file_meta.fingerprint
+                                                  )
+            return True
+        return False
 
     def edit_file_meta(self, edit_dict: Dict[Path, Dict[str, List[Any]]]) -> bool:
         sample_changed: bool = False
@@ -1251,179 +1192,6 @@ def read_pod5(pod5_file:str, metadata:dict) -> dict:
             if v:
                 metadata[k] = v
     return metadata
-
-
-def run_shell_cmd(cmd:str, timeout:int=0, debug:str='') -> dict:
-    """
-    Выполняет shell-команду с таймаутом и логированием результатов.
-
-    :param cmd: Команда для выполнения (строка, которая будет передана в shell)
-    :param timeout: Максимальное время выполнения в секундах (0 - без таймаута)
-    :param debug: Уровень логирования ('errors' - только ошибки, 'info' - stdout, 'all' - всё)
-    :returns: Словарь с результатами выполнения:
-        - log: метаданные выполнения (статус, временные отметки, код возврата)
-        - stderr: содержимое stderr (если есть)
-        - stdout: содержимое stdout (если есть)
-    """
-
-    timeout_param = None if timeout == 0 else timeout
-    # Время начала (общее)
-    start_time = time()
-    cpu_start_time = process_time()
-    start_datetime = datetime.now().strftime("%d.%m.%Y %H:%M:%S")
-
-    stdout, stderr = "", ""
-
-    result = subprocess.Popen(args=cmd,
-                              shell=True,
-                              stdout=subprocess.PIPE,
-                              stderr=subprocess.PIPE,
-                              universal_newlines=True,
-                              executable="/bin/bash",
-                              bufsize=1,
-                              cwd=None,
-                              env=None)
-    
-    try:       
-        # Ожидаем завершения с таймаутом
-        stdout, stderr = result.communicate(timeout=timeout_param)
-        # Построчно читаем стандартный вывод и ошибки в зависимости от уровня дебага
-        """
-        if debug:
-            streams = []
-            if debug in ['errors', 'all']:
-                streams.append(('STDERR', stderr.splitlines()))
-            if debug in ['info', 'all']:
-                streams.append(('STDOUT', stdout.splitlines()))
-
-            for label, stream in streams:
-                for line in stream:
-                    print(f"{label}: {line.strip()}")
-        """            
-        if debug:
-            if debug in ['errors', 'all'] and stderr:
-                for line in stderr.splitlines():
-                    logger.error(f"STDERR: {line.strip()}")
-            if debug in ['info', 'all'] and stdout:
-                for line in stdout.splitlines():
-                    logger.info(f"STDOUT: {line.strip()}")
-
-        duration_sec, duration, cpu_duration, end_datetime = get_duration(start_time=start_time, cpu_start_time=cpu_start_time)
-
-        if result.returncode == 0:
-            logger.info(f"Команда '{cmd}' выполнена успешно.")
-        else:
-            logger.warning(f"Команда:\n '{cmd}' \nзавершилась с ошибкой (код {result.returncode}).")
-
-        # Лог выполнения случае завершения без исключений
-        return {
-            'log': {
-                'status': 'OK' if result.returncode == 0 else 'FAIL',
-                'start_time': start_datetime,
-                'end_time': end_datetime,
-                'duration': duration,
-                'duration_sec': duration_sec,
-                'cpu_duration_sec': round(cpu_duration, 2),
-                'exit_code': result.returncode
-            },
-            'stderr': stderr.strip() if stderr else '',
-            'stdout': stdout.strip() if stdout else ''
-        }
-
-    except subprocess.TimeoutExpired:
-        result.kill()
-        stdout, stderr = result.communicate()
-        duration_sec, duration, cpu_duration, end_datetime = get_duration(start_time=start_time, cpu_start_time=cpu_start_time)
-        # Лог при тайм-ауте
-        logger.error(f"Команда:\n '{cmd}' \nпревысила таймаут ({timeout}s).")
-        return {
-            'log': {
-                'status': 'FAIL',
-                'start_time': start_datetime,
-                'end_time': end_datetime,
-                'duration': duration,
-                'duration_sec': duration_sec,
-                'cpu_duration_sec': round(cpu_duration, 2),
-                'exit_code': "TIMEOUT"
-            },
-            'stderr': stderr.strip() if stderr else '',
-            'stdout': stdout.strip() if stdout else ''
-        }
-    # Прерывание пользователем
-    except KeyboardInterrupt:
-        result.kill()
-        print('INTERRUPTED')
-        duration_sec, duration, cpu_duration, end_datetime = get_duration(start_time=start_time, cpu_start_time=cpu_start_time)
-        logger.error(f"Команда:\n '{cmd}' \nпрервана пользователем (KeyboardInterrupt).")
-        return {
-            'log':
-                {'status': 'FAIL',
-                'start_time':start_datetime,
-                'end_time':end_datetime,
-                'duration': duration,
-                'duration_sec': duration_sec,
-                'cpu_duration_sec': round(cpu_duration, 2),
-                'exit_code': 'INTERRUPTED'},
-            'stderr': stderr.strip() if stderr else '',
-            'stdout': stdout.strip() if stdout else ''   
-                }
-
-
-def get_duration(duration_sec:float=0, start_time:float=0, cpu_start_time:float=0, precision:str='s') -> tuple:
-    """
-    Возвращает продолжительность выполнения команды в необходимом формате.
-
-    :param duration_sec: Предварительно рассчитанная длительность в секундах (если 0 - вычисляется)
-    :param start_time: Время начала выполнения (timestamp)
-    :param cpu_start_time: CPU-время начала выполнения (process_time)
-    :param precision: Точность форматирования ('d'-дни, 'h'-часы, 'm'-минуты, 's'-секунды)
-    :returns: Кортеж с:
-        - duration_sec: общая длительность в секундах
-        - time_str: отформатированная строка времени
-        - cpu_duration: CPU-время выполнения
-        - end_datetime: строка с датой/временем завершения
-    """
-
-    # Время завершения (общее)
-    duration_sec = int(time() - start_time)
-    
-    # Форматируем секунды в дни, часы и минуты
-    time_str = convert_secs_to_dhms(secs=duration_sec, precision=precision)
-
-    cpu_duration = process_time() - cpu_start_time
-    end_datetime = datetime.now().strftime("%d.%m.%Y %H:%M:%S")
-    return (duration_sec, time_str, cpu_duration, end_datetime)
-
-
-def convert_secs_to_dhms(secs:int, precision:str='s') -> str:
-    """
-    Конвертирует секунды в удобочитаемый формат (дни/часы/минуты/секунды).
-
-    :param secs: Количество секунд для конвертации
-    :param precision: Максимальная единица точности ('d','h','m','s')
-    :returns: Отформатированная строка времени (например "1h 30m")
-    :raises ValueError: Если указана недопустимая точность
-    """
-
-    # Форматируем секунды в дни, часы и минуты
-    if precision not in ['d', 'h', 'm', 's']:
-        raise ValueError("Неправильное указание уровня точности!")
-    d, not_d = divmod(secs, 86400) # Возвращает кортеж из целого частного и остатка деления первого числа на второе
-    h, not_h = divmod(not_d, 3600)
-    m, s = divmod(not_h, 60)
-    measures = {'d':d, 'h':h, 'm':m, 's':s}
-    to_string = []
-    # Разряд времени пойдет в результат, если его значение не 0
-    for measure, val in measures.items():
-        if val !=0:
-            to_string.append(f'{val}{measure}')
-        if measure == precision:
-            break
-    # Формируем строку и определяем уровни точности
-    time_str = " ".join(to_string)
-    if len(time_str) == 0:
-        time_str = (f'< 1{precision}')
-    return time_str
 
 
 def update_file_in_meta(

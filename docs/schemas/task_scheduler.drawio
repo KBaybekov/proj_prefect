@@ -1,13 +1,13 @@
 <mxfile host="65bd71144e">
     <diagram id="G0fIvv3DWxtGgV4hDGr5" name="Инициализация">
-        <mxGraphModel dx="1434" dy="827" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="827" pageHeight="1169" math="0" shadow="0">
+        <mxGraphModel dx="478" dy="276" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="827" pageHeight="1169" math="0" shadow="0">
             <root>
                 <mxCell id="0"/>
                 <mxCell id="1" parent="0"/>
                 <mxCell id="sGjyhKyKFOVYeqwmsaiz-36" style="edgeStyle=none;html=1;" parent="1" source="3" target="sGjyhKyKFOVYeqwmsaiz-35" edge="1">
                     <mxGeometry relative="1" as="geometry"/>
                 </mxCell>
-                <mxCell id="3" value="Вызов&#xa;init_scheduler()" style="strokeWidth=2;shape=mxgraph.flowchart.start_1;whiteSpace=wrap;fillColor=#1ba1e2;fontColor=#ffffff;strokeColor=#006EAF;fontSize=13;fontStyle=1" parent="1" vertex="1">
+                <mxCell id="3" value="Создание экземпляра Scheduler" style="strokeWidth=2;shape=mxgraph.flowchart.start_1;whiteSpace=wrap;fillColor=#1ba1e2;fontColor=#ffffff;strokeColor=#006EAF;fontSize=13;fontStyle=1" parent="1" vertex="1">
                     <mxGeometry x="284" y="80" width="176" height="60" as="geometry"/>
                 </mxCell>
                 <mxCell id="4" value="DAO" style="strokeWidth=2;html=1;shape=mxgraph.flowchart.document2;whiteSpace=wrap;size=0.25;fillColor=#0050ef;fontColor=#ffffff;strokeColor=#001DBC;" parent="1" vertex="1">
@@ -36,10 +36,10 @@
                 <mxCell id="8" value="В коллекции tasks есть незавершённые задания, касающиеся этих образцов и пайплайнов?" style="strokeWidth=2;html=1;shape=mxgraph.flowchart.decision;whiteSpace=wrap;fillColor=#a20025;fontColor=#ffffff;strokeColor=#6F0000;" parent="1" vertex="1">
                     <mxGeometry x="265.5" y="707.5" width="213" height="115" as="geometry"/>
                 </mxCell>
-                <mxCell id="9" style="edgeStyle=none;html=1;entryX=0.5;entryY=0;entryDx=0;entryDy=0;exitX=0.5;exitY=1;exitDx=0;exitDy=0;" parent="1" source="sGjyhKyKFOVYeqwmsaiz-35" target="15" edge="1">
+                <mxCell id="9" style="edgeStyle=none;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" parent="1" source="sGjyhKyKFOVYeqwmsaiz-35" target="10" edge="1">
                     <mxGeometry relative="1" as="geometry">
                         <mxPoint x="350" y="160" as="sourcePoint"/>
-                        <mxPoint x="420" y="190" as="targetPoint"/>
+                        <mxPoint x="390" y="250" as="targetPoint"/>
                     </mxGeometry>
                 </mxCell>
                 <mxCell id="12" style="edgeStyle=none;html=1;entryX=0.5;entryY=0;entryDx=0;entryDy=0;exitX=0.5;exitY=1;exitDx=0;exitDy=0;" parent="1" source="G7pvp1iTRTKxePXi1stT-35" target="YIVxSTYVHGdNlxP4mOCA-35" edge="1">
@@ -48,11 +48,13 @@
                         <mxPoint x="382" y="490" as="targetPoint"/>
                     </mxGeometry>
                 </mxCell>
-                <mxCell id="G7pvp1iTRTKxePXi1stT-36" style="edgeStyle=none;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" parent="1" source="10" target="G7pvp1iTRTKxePXi1stT-35" edge="1">
-                    <mxGeometry relative="1" as="geometry"/>
+                <mxCell id="G7pvp1iTRTKxePXi1stT-36" style="edgeStyle=none;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" parent="1" source="10" target="15" edge="1">
+                    <mxGeometry relative="1" as="geometry">
+                        <mxPoint x="380" y="325" as="targetPoint"/>
+                    </mxGeometry>
                 </mxCell>
-                <mxCell id="10" value="Проверка наличия Slurm" style="rounded=1;whiteSpace=wrap;absoluteArcSize=1;arcSize=14;strokeWidth=2;" parent="1" vertex="1">
-                    <mxGeometry x="322" y="340" width="100" height="50" as="geometry"/>
+                <mxCell id="10" value="Загрузка SlurmManager, проверка связи с Slurm и выгрузка актуальной информации о заданиях" style="rounded=1;whiteSpace=wrap;absoluteArcSize=1;arcSize=14;strokeWidth=2;" parent="1" vertex="1">
+                    <mxGeometry x="267" y="260" width="210" height="50" as="geometry"/>
                 </mxCell>
                 <mxCell id="13" value="pipeline_config.yaml" style="strokeWidth=2;html=1;shape=mxgraph.flowchart.document2;whiteSpace=wrap;size=0.25;fillColor=#0050ef;fontColor=#ffffff;strokeColor=#001DBC;" parent="1" vertex="1">
                     <mxGeometry x="70" y="30" width="120" height="40" as="geometry"/>
@@ -65,11 +67,13 @@
                         </Array>
                     </mxGeometry>
                 </mxCell>
-                <mxCell id="16" style="edgeStyle=none;html=1;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" parent="1" source="15" target="10" edge="1">
-                    <mxGeometry relative="1" as="geometry"/>
+                <mxCell id="16" style="edgeStyle=none;html=1;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" parent="1" source="15" target="G7pvp1iTRTKxePXi1stT-35" edge="1">
+                    <mxGeometry relative="1" as="geometry">
+                        <mxPoint x="390" y="395" as="targetPoint"/>
+                    </mxGeometry>
                 </mxCell>
-                <mxCell id="15" value="Загрузка пайплайнов" style="rounded=1;whiteSpace=wrap;html=1;absoluteArcSize=1;arcSize=14;strokeWidth=2;" parent="1" vertex="1">
-                    <mxGeometry x="322" y="260" width="100" height="50" as="geometry"/>
+                <mxCell id="15" value="Выгрузка Tasks из БД и синхронизация с данными из Slurm" style="rounded=1;whiteSpace=wrap;absoluteArcSize=1;arcSize=14;strokeWidth=2;" parent="1" vertex="1">
+                    <mxGeometry x="282" y="340" width="180" height="50" as="geometry"/>
                 </mxCell>
                 <mxCell id="17" style="edgeStyle=none;html=1;entryX=0.5;entryY=0;entryDx=0;entryDy=0;entryPerimeter=0;exitX=0.5;exitY=1;exitDx=0;exitDy=0;exitPerimeter=0;" parent="1" source="5D5jTwL1fEfGLm_YI3kQ-35" target="8" edge="1">
                     <mxGeometry relative="1" as="geometry">
@@ -147,11 +151,23 @@
                 <mxCell id="5D5jTwL1fEfGLm_YI3kQ-41" style="edgeStyle=none;html=1;entryX=1;entryY=0.5;entryDx=0;entryDy=0;entryPerimeter=0;" parent="1" source="8" target="5D5jTwL1fEfGLm_YI3kQ-40" edge="1">
                     <mxGeometry relative="1" as="geometry"/>
                 </mxCell>
-                <mxCell id="sGjyhKyKFOVYeqwmsaiz-35" value="Создание экземпляра Scheduler" style="rounded=1;whiteSpace=wrap;absoluteArcSize=1;arcSize=14;strokeWidth=2;" parent="1" vertex="1">
+                <mxCell id="sGjyhKyKFOVYeqwmsaiz-35" value="Вызов&#xa;init_scheduler()" style="rounded=1;whiteSpace=wrap;absoluteArcSize=1;arcSize=14;strokeWidth=2;" parent="1" vertex="1">
                     <mxGeometry x="288" y="180" width="168" height="50" as="geometry"/>
                 </mxCell>
-                <mxCell id="G7pvp1iTRTKxePXi1stT-35" value="Выгружаем Tasks&#xa;из БД" style="rounded=1;whiteSpace=wrap;absoluteArcSize=1;arcSize=14;strokeWidth=2;" parent="1" vertex="1">
+                <mxCell id="G7pvp1iTRTKxePXi1stT-35" value="Загрузка пайплайнов" style="rounded=1;whiteSpace=wrap;absoluteArcSize=1;arcSize=14;strokeWidth=2;" parent="1" vertex="1">
                     <mxGeometry x="322" y="410" width="100" height="50" as="geometry"/>
+                </mxCell>
+                <mxCell id="36" value="" style="verticalLabelPosition=bottom;verticalAlign=top;html=1;shape=mxgraph.basic.tick;fillColor=#008a00;fontColor=#ffffff;strokeColor=#005700;" vertex="1" parent="1">
+                    <mxGeometry x="490" y="100" width="20" height="20" as="geometry"/>
+                </mxCell>
+                <mxCell id="37" value="" style="verticalLabelPosition=bottom;verticalAlign=top;html=1;shape=mxgraph.basic.tick;fillColor=#008a00;fontColor=#ffffff;strokeColor=#005700;" vertex="1" parent="1">
+                    <mxGeometry x="490" y="195" width="20" height="20" as="geometry"/>
+                </mxCell>
+                <mxCell id="39" value="" style="verticalLabelPosition=bottom;verticalAlign=top;html=1;shape=mxgraph.basic.tick;fillColor=light-dark(#008A00,#CCCC00);fontColor=#ffffff;strokeColor=#005700;" vertex="1" parent="1">
+                    <mxGeometry x="520" y="275" width="20" height="20" as="geometry"/>
+                </mxCell>
+                <mxCell id="40" value="" style="verticalLabelPosition=bottom;verticalAlign=top;html=1;shape=mxgraph.basic.tick;fillColor=#008a00;fontColor=#ffffff;strokeColor=#005700;" vertex="1" parent="1">
+                    <mxGeometry x="490" y="425" width="20" height="20" as="geometry"/>
                 </mxCell>
             </root>
         </mxGraphModel>

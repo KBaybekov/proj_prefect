@@ -99,18 +99,42 @@ class TaskScheduler:
     def __init__(
                  self,
                  dao: ConfigurableMongoDAO,
+                 slurm_user:str,
                  poll_interval: int = 60
                 ):
         self.dao:ConfigurableMongoDAO = dao
         self.poll_interval:int = poll_interval
-        self.submitted_tasks:Dict[str, SlurmTask] = {
-                                                     task_from_db['name']: SlurmTask.from_db(task_from_db)
-                                                     for task_from_db in self.dao.find(
-                                                                                       collection="tasks",
-                                                                                       query={'status': {"ne":"finished"}},
-                                                                                       projection={}
-                                                                                      )
-                                                    }
+        self.slurm_manager:SlurmManager = self._create_slurm_manager(slurm_user)
+        self.submitted_tasks_slurm:Dict[str, Dict[str, Any]] = self.slurm_manager._get_queued_tasks_data()
+        self.submitted_tasks_db:Dict[str, SlurmTask] = self._get_submitted_tasks_from_db()
+    
+    def _create_slurm_manager(
+                              self,
+                              slurm_user:str
+                             ) -> SlurmManager:
+        slurm_manager = SlurmManager(slurm_user)
+        slurm_manager._check_connection()
+        return slurm_manager
+        
+
+    def _get_submitted_tasks_from_db(
+                                     self
+                                    ) -> Dict[str, SlurmTask]:
+        submitted_tasks_from_db = {}
+        dao_request = self.dao.find(
+                                    collection="tasks",
+                                    query={'status': {"ne":"finished"}},
+                                    projection={}
+                                   )
+        if dao_request:
+            submitted_tasks_from_db = {
+                                       task_from_db['name']: SlurmTask.from_db(task_from_db)
+                                       for task_from_db in dao_request
+                                      }
+            logger.debug(f"Выгружено запущенных задач из БД: {len(submitted_tasks_from_db)}")
+        else:
+            logger.debug("Выгружено запущенных задач из БД: 0")
+        return submitted_tasks_from_db
 
 
     def init_scheduler(
@@ -137,15 +161,7 @@ class TaskScheduler:
         # Загрузка менеджера Slurm
         self.slurm_manager = SlurmManager()
         logger.info("Менеджер Slurm инициализирован.")
-        '''
-        # Формирование массива образцов, готовых к обработке
-        process_ready_samples = self.dao.find(
-                                              collection="samples",
-                                              query={'status': 'indexed'},
-                                              projection={}
-                                              )
-        logger.debug(f"Образцов готово к обработке: {len(process_ready_samples)}.")
-        '''
+
         # Формирование списка образцов, подходящих для обработки, для каждого пайплайна
         for pipeline_name, pipeline in self.pipelines.items():
             logger.debug(f"Пайплайн {pipeline_name}:")

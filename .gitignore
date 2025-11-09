@@ -4,7 +4,7 @@
 /docs/g*/
 /logs
 /src/test*.py
-/test
+/test_space
 /tmp
 /src/wipe_db_data.py
 /src/unused.py
