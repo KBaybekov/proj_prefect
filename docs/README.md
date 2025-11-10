@@ -220,21 +220,7 @@
 
 task_scheduler должен сортировать образцы на обработку по приоритетам (к примеру, сначала обрабатывать самые маленькие по размеру образцы)
 
-add slurm options:
-
-#SBATCH --time=1:00:00                # Maximum runtime (D-HH:MM:SS)
-
-**-a** ,  **--array** =< *indexes* >
-
-**--cpus-per-gpu** =< *ncpus* >
-
-**-c** ,  **--cpus-per-task** =< *ncpus* > !!!!
-
-**--kill-on-invalid-dep** =<yes|no>
-
---time
-
---begin
+Доработать обновление системных настроек в случае изменения конфига
 
 align:
     samtools_index: -@ 4 -> -@ params.threads

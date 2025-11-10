@@ -100,31 +100,55 @@ def to_mongo(obj: Any, *, keep_empty: bool = True) -> Any:
     return str(obj)
 
 
-@dataclass  
+@dataclass
 class ConfigurableMongoDAO:
     """Универсальный DAO с динамическими коллекциями и ensure_indexes()."""
-    client: MongoClient
-    db_name: str
-    collections_config: Dict[str, Dict[str, Any]] = field(default_factory=dict)
+    _cfg: Dict[str, Any] 
+    _client: MongoClient = field(default_factory=MongoClient)
     db: pymongo.database.Database = field(init=False) # type: ignore
 
-    def __post_init__(self) -> None:
-        self.db = self.client[self.db_name]
-        # Динамически добавляем атрибуты-коллекции
-        for coll_name in self.collections_config.keys():
-            setattr(self, coll_name, self.db.get_collection(coll_name))
-        # Создаём индексы
-        if self.collections_config:
-            logger.debug(f"Проверяем индексы в {self.collections_config.keys()}")
-            self.ensure_indexes()
+    def init_dao(
+                 self
+                ) -> None:
+        self._client = self._get_mongo_client()
+        self.db = self._client[self._cfg['db_name']]
+        self._check_collections()
+        return None
+    
+    def _get_mongo_client(
+                          self                              
+                         ) -> MongoClient:   
+        client = MongoClient(
+                             host=self._cfg['host'],
+                             username=self._cfg['user'],
+                             password=self._cfg['password'],
+                             serverSelectionTimeoutMS=int(self._cfg['timeout'])
+                            )
+        try:
+            client.admin.command("ping")
+        except pymongo.errors.ServerSelectionTimeoutError: # type: ignore
+            raise ValueError('DB unavailable')
+        return client
 
-    def ensure_indexes(self) -> None:
+    def _check_collections(
+                           self
+                          ) -> None:
+        for coll_name in self._cfg['collections'].keys():
+            if not hasattr(self, coll_name):
+                setattr(self, coll_name, self.db.get_collection(coll_name))
+            self._ensure_indexes(coll_name)
+        return None
+
+    def _ensure_indexes(
+                        self,
+                        coll_name:str
+                       ) -> None:
         """Идёмпотентно создаём индексы по конфигу YAML."""
-        for coll_name, cfg in self.collections_config.items():
-            coll = getattr(self, coll_name, None)
-            if coll is None:
-                continue
-            for spec in cfg.get("indexes", []):
+        coll: Optional[pymongo.collection.Collection] # type: ignore
+        coll = getattr(self, coll_name, None)
+        if coll != None:
+            coll_cfg = self._cfg['collections'].get(coll_name, {})
+            for spec in coll_cfg.get("indexes", []):
                 keys = spec.get("keys", [])
                 name = spec.get("name")
                 kwargs = {k: v for k, v in spec.items() if k not in {"keys", "name"}}
@@ -291,19 +315,6 @@ class ConfigurableMongoDAO:
             logger.debug(f"Нет документов для удаления в коллекции {collection} при запросе {query}")
         else:
             logger.warning(f"Неожиданное количество удалённых документов ({result.deleted_count}) в коллекции {collection}")
-
-def get_mongo_client(
-                     uri:str,
-                     db_user:str,
-                     db_pass:str,
-                     db_name:str
-                    ) -> MongoClient:
-    client = MongoClient(uri, username=db_user, password=db_pass, serverSelectionTimeoutMS=2000)
-    try:
-        client.admin.command("ping")
-    except pymongo.errors.ServerSelectionTimeoutError: # type: ignore
-        raise ValueError('DB unavailable')
-    return client
 
 def _load_db_config_yaml(path: Path) -> Dict[str, Dict[str, Any]]:
     """Читаем config/db_config.yaml и собираем структуру индексов."""

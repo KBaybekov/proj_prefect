@@ -6,7 +6,12 @@ from utils.logger import get_logger
 
 logger = get_logger(name=__name__)
 
+# !!! Доработать 
 class RefStore:
+    """
+    Хранилище ссылок на файлы конфигурации.
+    Отслеживает изменение конфигурационных файлов.
+    """
     def __init__(self, paths: dict[str, Path]):
         self.paths: dict[str, Path] = paths
         self.cache: dict[str, dict] = {}

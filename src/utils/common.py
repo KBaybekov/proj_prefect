@@ -1,13 +1,39 @@
-from typing import Optional
+import argparse
 import os
 import subprocess
 import time
 from datetime import datetime
+from typing import Optional
 from yaml import dump, safe_load, YAMLError
 from pathlib import Path
 from utils.logger import get_logger
 
 logger = get_logger(name=__name__)
+
+def setup_parser() -> argparse.ArgumentParser:
+    """
+    Создает и настраивает парсер аргументов командной строки.
+    """
+    parser = argparse.ArgumentParser(
+                                     description="FsCrawler - инструмент для сканирования файловой системы и работы с метаданными",
+                                     formatter_class=argparse.RawDescriptionHelpFormatter,
+                                     epilog="""
+                                               Примеры использования:
+                                               %(prog)s scan --source /data --link /links --db_uri mongodb://localhost:27017
+                                               %(prog)s index --source /data --link /links
+                                               %(prog)s watch --source /data --polling
+                                            """
+                                )
+
+    # Основные аргументы
+    parser.add_argument(
+                        "-c",
+                        "--configuration",
+                        type=Path,
+                        required=True,
+                        help="Файл конфигурации"
+                       )
+    return parser
 
 
 def env_var(var:str) -> str:
