@@ -1,30 +1,58 @@
 import time
 import subprocess
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any, Dict, IO, List, Optional, Union
+from ast import literal_eval 
+from typing import Any, Dict, IO, List, Optional, Set, Union
+from pathlib import Path
 from pymongo.collection import Collection
 from utils.logger import get_logger
 from shlex import split as shlex_split
+from slurm_task import SlurmTask
 
 
 logger = get_logger(__name__)
 
+@dataclass(slots=True)
 class SlurmManager:
-    def __init__(
-                 self,
-                 slurm_user: str
-                ):
-        self.user = slurm_user
-        self._check_connection()
+    user:str
+    poll_interval:int
+    queue_size:int
+    submitted_tasks_slurm:Dict[str, SlurmTask] = field(default_factory=dict)
+    submitted_tasks_db:Dict[str, SlurmTask] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        self._check_slurm_presence()
         return
 
-    def _check_connection(self) -> None:
+    def _check_slurm_presence(self) -> None:
         if self.run_subprocess(["which", "sbatch"]).returncode == 0:
             logger.debug("Slurm доступен.")
         else:
             logger.error("Slurm не доступен.")
             raise Exception("Slurm не доступен.")
-        
+    
+    def _actualize_submitted_tasks_data(
+                                        self,
+                                        db_tasks:List[str]
+                                       ) -> Dict[str, Any]:
+        """
+        Актуализирует данные о статусах задач в Slurm.
+        Возвращает словарь с данными по задачам.
+        """
+        def __convert_to_slurm_task(
+                                    tasks:Dict[str, Dict[str, Any]]
+                                   ) -> Dict[str, SlurmTask]:
+            
+            return {
+                    task_id: SlurmTask.from_dict(task_data)
+                    for task_id, task_data in tasks.items()
+                   }
+
+        slurm_data = self._get_queued_tasks_data()
+        # 
+
+
     def _get_queued_tasks_data(
                                self
                               ) -> Dict[str, Dict[str, Any]]:
@@ -32,14 +60,60 @@ class SlurmManager:
         Получает информацию о заданиях, находящихся в очереди Slurm.
         Возвращает словарь с информацией о заданиях.
         """
-        data = self.run_subprocess(
+        data = literal_eval(self.run_subprocess(
                                    cmd=[
                                         "squeue",
                                         "--user", self.user,
-                                        "json"
+                                        "--json"
                                    ]
-                                  )
+                                  ).stdout)
+        return data
     
+    def _update_task_data(
+                          self,
+                          task_id:str,
+                         ) -> None:
+        """
+        Запрашивает в БД статус задачи. Предполагается, что в БД есть запись о задаче.
+        Если статус не указывает на завершение ('CANCELLED', 'COMPLETED', 'FAILED'),
+        обновляет статус путём запроса в Slurm по job_id. Если в Slurm нет указанного job_id,
+        проверяет наличие выходных файлов.
+        
+        """
+        def __is_task_completed(status:str) -> bool:
+            if status in ['ok', 'failed']:
+                return True
+            else:
+                return False
+            
+        task_completed = False
+        task_record:SlurmTask = self.submitted_tasks.get(
+                                                         task_id,
+                                                         SlurmTask.from_db(self.dao.find_one(
+                                                                                             collection="tasks",
+                                                                                             query={"task_id": task_id},
+                                                                                             projection={}
+                                                                                            ))) # type: ignore
+        # В случае, если статусы задачи в Slurm указывают на её завершение, направляем на процедуру завершения обработки задания
+        task_completed = __is_task_completed(task_record.slurm_status)
+        # В противном случае запрашиваем статус задачи в Slurm
+        if task_completed:
+            self._task_completion_check(task_record)
+        else:
+            task_record.slurm_status = self.slurm_manager._get_job_info(task_record.slurm_job_id)
+            task_completed = __is_task_completed(task_record.slurm_status)
+            if task_completed
+
+            #!!! крч, тут у нас процедура обновления данных и завершения обработки, если задача всё.
+            # У меня сейчас не хватает понимания, что там должно куда идти и откуда, так что я пока бросил всё это (30.10.25,20:30)
+        
+
+
+
+            
+            #self._extract_task_results_to_sample(db_task_record)
+
+
     def submit_to_slurm(self, job_script: str, job_name: str, resources: Dict[str, Any]) -> str:
         """Отправляет задание в Slurm и возвращает ID задачи."""
         sbatch_cmd = ["sbatch"]

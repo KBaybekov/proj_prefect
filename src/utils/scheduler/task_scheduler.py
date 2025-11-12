@@ -7,139 +7,26 @@ from utils.logger import get_logger
 from pathlib import Path
 from .slurm_manager import SlurmManager
 from utils.filesystem.metas import SampleMeta
+from pipeline import Pipeline
+from slurm_task import SlurmTask
+
 
 logger = get_logger(__name__)
 
 
-class Pipeline:
-    def __init__(
-                 self,
-                 config: Dict[str, Any]
-                ):
-        self.name:str = config['name']
-        self.version:str = config['version']
-        self.id:str = f"{self.name}_{self.version}"
-        self.data_shaper:Path = config['input_data_shaper']
-        self.conditions:List[Dict[str, Any]] = [
-                                                {
-                                                 'field':condition['field'],
-                                                 'type':condition['type'],
-                                                 'value':condition['value']
-                                                } for condition in config['conditions']
-                                               ]
-        self.slurm_resources:Dict[str, Any] = config['resources']
-        self.cmd_template:str = config['command_template']
-        self.output_files:List[str] = config['output_files']
-        self.compatible_samples:List[Dict[str, Any]] = []
-        self.samples2process:set = set()
-
 @dataclass(slots=True)
-class SlurmTask:
-    # Шаблон имени: sample_sample_fingerprint_pipeline_name_pipeline_version
-    task_id:str 
-    sample:str = field(default_factory=str)
-    pipeline_name:str = field(default_factory=str)
-    sample_fingerprint:str = field(default_factory=str)
-    pipeline_version:str = field(default_factory=str)
-    slurm_job_id:str = field(default_factory=str)
-    slurm_status:str = field(default="")
-    nextflow_status:str = field(default="")
-    output_files_status:Dict[Path, bool] = field(default_factory=dict)
-    work_dir:Path = field(default_factory=Path)
-    result_dir:Path = field(default_factory=Path)
-    estimated_completion_time:Optional[datetime] = field(default=None)
-    start:Optional[datetime] = field(default=None)
-    finish:Optional[datetime] = field(default=None)
-    time_spent:Optional[datetime] = field(default=None)
-    output_files_expected:List[Path] = field(default_factory=list)
-    # Словарь вида {тип файлов:список файлов}
-    input_files:Dict[str,Set[Path]] = field(default_factory=dict)
-    input_files_size:Dict[str,int] = field(default_factory=dict)
-    error_data:Dict[str, Any] = field(default_factory=dict)
-    slurm_queue:str = field(default_factory=str)
-    slurm_queue_position:int = field(default_factory=int)
-    
-    @staticmethod
-    def from_db(doc: Dict[str, Any]) -> SlurmTask:
-        """
-        Создаёт объект Task из документа БД.
-
-        :param doc: Документ из коллекции 'tasks' в MongoDB.
-        :return: Объект Task.
-        """
-        # Инициализируем основные поля SampleMeta
-        slurm_task = SlurmTask(
-                               task_id=doc.get("task_id", ""),
-                               sample=doc.get("sample", ""),
-                               pipeline_name=doc.get("pipeline_name", ""),
-                               sample_fingerprint=doc.get("sample_fingerprint", ""),
-                               pipeline_version=doc.get("pipeline_version", ""),
-                               slurm_job_id=doc.get("slurm_job_id", ""),
-                               slurm_status=doc.get("slurm_status", ""),
-                               nextflow_status=doc.get("nextflow_status", ""),
-                               output_files_status=doc.get("output_files_status", {}),
-                               work_dir=Path(doc.get("work_dir", "")),
-                               result_dir=Path(doc.get("result_dir", "")),
-                               estimated_completion_time=doc.get("estimated_completion_time"),
-                               start=doc.get("start"),
-                               finish=doc.get("finish"),
-                               time_spent=doc.get("time_spent"),
-                               output_files_expected=doc.get("output_files_expected", []),
-                               input_files=doc.get("input_files", {}),
-                               input_files_size=doc.get("input_files_size", {}),
-                               error_data=doc.get("error_data", {}),
-                              )
-        return slurm_task
-    
-    def to_db(self) -> None:
-        return
-
-
 class TaskScheduler:
-    def __init__(
-                 self,
-                 dao: ConfigurableMongoDAO,
-                 slurm_user:str,
-                 poll_interval: int = 60
-                ):
-        self.dao:ConfigurableMongoDAO = dao
-        self.poll_interval:int = poll_interval
-        self.slurm_manager:SlurmManager = self._create_slurm_manager(slurm_user)
-        self.submitted_tasks_slurm:Dict[str, Dict[str, Any]] = self.slurm_manager._get_queued_tasks_data()
-        self.submitted_tasks_db:Dict[str, SlurmTask] = self._get_submitted_tasks_from_db()
+    _cfg:Dict[str, Any]
+    dao:ConfigurableMongoDAO
+    poll_interval:int = field(default=30)
+    slurm_manager:Optional[SlurmManager] = field(default=None)
+    pipelines: Dict[str, Pipeline] = field(default_factory=dict)
+    created_tasks: Dict[str, Any] = field(default_factory=dict)
+    submitted_tasks: List[str] = field(default_factory=list)
+
     
-    def _create_slurm_manager(
-                              self,
-                              slurm_user:str
-                             ) -> SlurmManager:
-        slurm_manager = SlurmManager(slurm_user)
-        slurm_manager._check_connection()
-        return slurm_manager
-        
-
-    def _get_submitted_tasks_from_db(
-                                     self
-                                    ) -> Dict[str, SlurmTask]:
-        submitted_tasks_from_db = {}
-        dao_request = self.dao.find(
-                                    collection="tasks",
-                                    query={'status': {"ne":"finished"}},
-                                    projection={}
-                                   )
-        if dao_request:
-            submitted_tasks_from_db = {
-                                       task_from_db['name']: SlurmTask.from_db(task_from_db)
-                                       for task_from_db in dao_request
-                                      }
-            logger.debug(f"Выгружено запущенных задач из БД: {len(submitted_tasks_from_db)}")
-        else:
-            logger.debug("Выгружено запущенных задач из БД: 0")
-        return submitted_tasks_from_db
-
-
     def init_scheduler(
-                       self,
-                       pipeline_cfg:Dict[str, Dict[str, Any]]
+                       self
                       ) -> None:
         def __check_for_task_submission(pipeline_name: str, sample: str) -> dict:
             found_task = self.dao.find_one(
@@ -152,16 +39,37 @@ class TaskScheduler:
             logger.debug(f"Пайплайн {pipeline_name} для образца {sample} ранее запущен не был.")
             return {}
         
+        logger.debug("Инициализация менеджера Slurm...")
+        # Загрузка менеджера Slurm
+        self.slurm_manager = SlurmManager(
+                                          user=self._cfg['slurm_user'],
+                                          poll_interval=int(self._cfg['slurm_poll_interval']),
+                                          queue_size=int(self._cfg['slurm_queue_size'])
+                                         )
+        logger.info("Менеджер Slurm инициализирован.")
+        
         # Загрузка конфигурации пайплайнов
         self.pipelines: Dict[str, Pipeline] = {
                                                pipeline:Pipeline(pipeline_data)
-                                               for pipeline, pipeline_data in pipeline_cfg.items()
+                                               for pipeline, pipeline_data in self._cfg['pipelines'].items()
                                               }
         logger.info(f"Загружено {len(self.pipelines)} пайплайнов:\n{'\n\t'.join(self.pipelines.keys())}.")
-        # Загрузка менеджера Slurm
-        self.slurm_manager = SlurmManager()
-        logger.info("Менеджер Slurm инициализирован.")
+        # Выгрузка из БД запущенных задач
+        self.submitted_tasks = self._get_submitted_tasks_from_db()
+        # Актуализация информации о запущенных заданиях
+        self.slurm_manager._actualize_submitted_tasks_data(self.submitted_tasks)
+        # Формирование заданий на обработку
+        self._create_new_tasks()
 
+
+        return
+        
+    def _create_new_tasks(
+                          self
+                         ) -> None:
+        """
+        Создание новых задач на обработку из данных БД и данных класса.
+        """
         # Формирование списка образцов, подходящих для обработки, для каждого пайплайна
         for pipeline_name, pipeline in self.pipelines.items():
             logger.debug(f"Пайплайн {pipeline_name}:")
@@ -188,15 +96,29 @@ class TaskScheduler:
                     # Формируем имя задачи
                     task_id = self._create_task_id(sample, pipeline)
                     # Проверяем на всякий случай, была ли задача запущена ранее, но не отмечена в sample.tasks
-                    if self._is_submitted_task_in_db(task_id):
-                        # Обновляем информацию о задаче в samples & tasks
-                        self._update_task_data(task_id)
+                    if self._task_exists(task_id):
+                        continue
                     else:
-                        pipeline.samples2process.add(sample)
-            # !!! Дальше нам надо будет создать задания для подходящих образцов (как насчёт формирования очередей по возрастанию длительности обработки?)
+                        self._create_task(
+                                          task_id,
+                                          sample,
+                                          pipeline    
+                                         )
 
-            return
-        
+    def _get_submitted_tasks_from_db(
+                                     self
+                                    ) -> List[str]:
+        dao_request = self.dao.find(
+                                    collection="tasks",
+                                    query={'status': {"ne":"finished"}},
+                                    projection={'task_id':1}
+                                   )
+        if dao_request:
+            logger.debug(f"Выгружено запущенных задач из БД: {len(dao_request)}")
+        else:
+            logger.debug("Выгружено запущенных задач из БД: 0")
+        return [task_id for _, task_id in dao_request]
+
     def _create_task_id(
                         self,
                         sample: Dict[str, Any],
@@ -204,61 +126,25 @@ class TaskScheduler:
                        ) -> str:
         return f"{sample['sample']}_{sample['fingerprint']}_{pipeline.name}_{pipeline.version}"    
         
-    def _is_submitted_task_in_db(
-                                 self,
-                                 task_id: str
-                                ) -> bool:
-        if self.dao.find_one(
-                             collection="tasks",
-                             query={'task_id': task_id},
-                             projection={'_id':1}
-                            ):
-            return True
-        return False
-
-    def _update_task_data(
-                          self,
-                          task_id:str,
-                         ) -> None:
+    def _create_task(
+                     self,
+                     task_id,
+                     sample,
+                     pipeline
+                    ) -> SlurmTask:
         """
-        Запрашивает в БД статус задачи. Предполагается, что в БД есть запись о задаче.
-        Если статус не указывает на завершение ('CANCELLED', 'COMPLETED', 'FAILED'),
-        обновляет статус путём запроса в Slurm по job_id. Если в Slurm нет указанного job_id,
-        проверяет наличие выходных файлов.
-        
+        Формирует задание на обработку
         """
-        def __is_task_completed(status:str) -> bool:
-            if status in ['ok', 'failed']:
-                return True
-            else:
-                return False
-            
-        task_completed = False
-        task_record:SlurmTask = self.submitted_tasks.get(
-                                                         task_id,
-                                                         SlurmTask.from_db(self.dao.find_one(
-                                                                                             collection="tasks",
-                                                                                             query={"task_id": task_id},
-                                                                                             projection={}
-                                                                                            ))) # type: ignore
-        # В случае, если статусы задачи в Slurm указывают на её завершение, направляем на процедуру завершения обработки задания
-        task_completed = __is_task_completed(task_record.slurm_status)
-        # В противном случае запрашиваем статус задачи в Slurm
-        if task_completed:
-            self._task_completion_check(task_record)
-        else:
-            task_record.slurm_status = self.slurm_manager._get_job_info(task_record.slurm_job_id)
-            task_completed = __is_task_completed(task_record.slurm_status)
-            if task_completed
+        # Запрашиваем
 
-            #!!! крч, тут у нас процедура обновления данных и завершения обработки, если задача всё.
-            # У меня сейчас не хватает понимания, что там должно куда идти и откуда, так что я пока бросил всё это (30.10.25,20:30)
-        
+    def _task_exists(
+                     self,
+                     task_id: str
+                    ) -> bool:
+        return task_id in self.submitted_tasks
 
 
-
-            
-            #self._extract_task_results_to_sample(db_task_record)
+   
     def _task_completion_check(
                                self,
                                task_record:SlurmTask
