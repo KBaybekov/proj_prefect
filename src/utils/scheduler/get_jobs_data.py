@@ -6,6 +6,7 @@ import getpass
 from pathlib import Path
 from csv import reader as csv_reader
 import yaml
+import time
 
 
 # helpers
@@ -124,11 +125,18 @@ def get_child_jobs(trace_report:Path) -> List[int]:
             job_name = splitted[5]
 
 
+def _hash_file(path:Path) -> int:
+    return hash(path.read_bytes())
+
 
 with open('tmp/slurm_tasks1.yaml', 'w') as file:
         yaml.dump(get_user_jobs(user='kbajbekov'), file)
 
 # Нам нужно получить минимальную информацию обо всех задачах в пайплайне
 # Т.к. Slurm быстро всё удаляет, будем парсить данные из трейса пайплайна и соотносить с полученной информацией
-squeue_data = get_user_jobs(user='kbajbekov')
+usr = 'kbajbekov'
+squeue_data = get_user_jobs(user=usr)
 trace_data = parse_trace_report(Path('/home/kbajbekov/raid/kbajbekov/common_share/github/proj_prefect/tmp/trace_report.txt'))
+
+while True:
+    time.sleep(10)
