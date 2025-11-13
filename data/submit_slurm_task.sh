@@ -46,6 +46,9 @@ export NXF_OFFLINE=true
 export NXF_WORK="${JOB_WORK_DIR}"
 export NXF_LOG_FILE="${LOG_DIR}/nextflow/nxf_${J_NAME}.log"
 export NXF_DATE_FORMAT="dd-MM-yyyy_HH:mm:ss"
+export NXF_ANSI_LOG=false
+export NXF_DISABLE_CHECK_LATEST=true
+export NXF_OPTS=-name=nxf_${J_NAME}_${TIMESTAMP} resume=true
 
 # Pipeline variables
 export GPUS_4_BASECALLING=${GPUS_4_BASECALLING}
@@ -55,7 +58,6 @@ nextflow run nxf-csp/ont-basecalling/ \
   --run_id ${J_NAME} \
   --input /raid/kbajbekov/common_share/github/proj_prefect/test_space/input_data/full_size_fast5_dataset_1Tb.csv \
   --outdir ${JOB_RESULT_DIR} \
-  -resume
 
 EOF
 

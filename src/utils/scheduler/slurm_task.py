@@ -6,11 +6,15 @@ from typing import Any, Dict, List, Optional, Set
 
 @dataclass(slots=True)
 class SlurmJob:
+    # Идентификаторы
     job_id:int = field(default_factory=int)
+    parent_job_id:int = field(default_factory=int)
     name:str = field(default_factory=str)
-    nodes:str = field(default_factory=str)
+    # Отслеживание
+    work_dir:Path = field(default_factory=Path)
     partition:str = field(default_factory=str)
     priority:str = field(default="")
+    nodes:str = field(default_factory=str)
     status:str = field(default="")
     stderr:Path = field(default_factory=Path)
     stdout:Path = field(default_factory=Path)
@@ -19,15 +23,6 @@ class SlurmJob:
     start:Optional[datetime] = field(default=None)
     finish:Optional[datetime] = field(default=None)
     limit:Optional[datetime] = field(default=None)
-    work_dir:Path = field(default_factory=Path)
-
-@dataclass(slots=True)
-class NextflowData:
-    name:str = field(default_factory=str)
-    logs:Path = field(default_factory=Path)
-    trace:Path = field(default_factory=Path)
-    report:Path = field(default_factory=Path)
-    dag:Path = field(default_factory=Path)
 
 @dataclass(slots=True)
 class TaskData:
@@ -49,11 +44,9 @@ class ProcTask:
     pipeline_version:str = field(default_factory=str)
     # Файлы
     data: TaskData = field(default_factory=TaskData)
-    # Nextflow
-    nextflow: Optional[NextflowData] = field(default=None)
     # Slurm
-    slurm_data:Optional[SlurmJob] = field(default=None)
-    child_jobs:Set[SlurmJob] = field(default_factory=set)
+    slurm_main_job:Optional[SlurmJob] = field(default=None)
+    slurm_child_jobs:Dict[int, SlurmJob] = field(default_factory=dict)
     # Папки
     result_dir:Path = field(default_factory=Path)
     # Время

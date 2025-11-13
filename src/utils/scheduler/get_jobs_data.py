@@ -1,4 +1,4 @@
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 import os
 import json
 import subprocess
@@ -26,7 +26,7 @@ def _first_present(d: dict, keys):
 
 
 
-def get_user_jobs(user: Optional[str] = None) -> Dict[str, dict]:
+def get_user_jobs(user: Optional[str] = None) -> Dict[int, Dict[str, Union[str, int]]]:
     """
     Возвращает словарь job_id -> summary_dict, полученный из `squeue --json -u user`.
     Не вызывает scontrol (чтобы быть лёгким).
@@ -40,10 +40,11 @@ def get_user_jobs(user: Optional[str] = None) -> Dict[str, dict]:
 
     try:
         j = json.loads(out)
-    except Exception:
+    except Exception as e:
+        print("Ошибка при преобразовании stdout squeue в json:", e)
         return {}
 
-    jobs:List[Dict[str, Any]] = j.get("jobs") or j.get("job") or []
+    jobs:List[Dict[Union[int, str], Any]] = j.get("jobs") or []
     result = {}
     for job in jobs:
         # tolerant field extraction (squeue json keys can vary by version)
@@ -51,8 +52,12 @@ def get_user_jobs(user: Optional[str] = None) -> Dict[str, dict]:
         if not jid:
             continue
         entry = {
+            "job_id": jid,
             "name": job.get('name'),
             "array_job_id": job.get('array_job_id'),
+            "parent_job_id": 0
+                                if not job.get('comment', '')
+                                else int(job.get('comment', '').removeprefix("parent_job_id ")),
             "nodes": job.get('nodes'),
             "partition": job.get('partition'),
             "priority": job.get('priority', {}).get('number'),
@@ -72,71 +77,34 @@ def get_user_jobs(user: Optional[str] = None) -> Dict[str, dict]:
     return result
 
 
-def parse_trace_report(trace_report:Path) -> Dict[str, Dict[str, Any]]:
-    def extract_columns_tsv(file_path:Path):
-        """
-        Extract specific columns from TSV file with minimal I/O.
+def add_child_jobs(squeue_data:Dict[int, Dict[str, Union[str, int]]],
+                   main_job_id:int) -> Dict[str, Union[str, int]]:
+    child_jobs = {}
+    for job_id, job_data in squeue_data.items():
+        if job_data['parent_job_id'] == main_job_id:
+            child_jobs.update({job_id:job_data})
+    return child_jobs
 
-        """
-        cols_with_data = {
-                          'job_id':2,
-                          'name':5,
-                          'status':6,
-                          'exit_code':7
-                         }
-        data = {}
-        with open(file_path, 'r', newline='') as f:
-            reader = csv_reader(f, delimiter='\t')
-            next(reader)  # Skip header
-            for row in reader:
-                if len(row) > max(cols_with_data.values()):  # Ensure row has enough columns
-                    data.update({row[cols_with_data['job_id']]:{
-                                                            col_name: row[col] for col_name, col
-                                                            in cols_with_data.items()
-                                                            if col_name != 'job_id'
-                                                            }})
-                else:
-                    print(f"Warning: Row {row} has fewer columns than expected.")
-                    continue
-        return data
-    
-
-    if any([
-            not trace_report.exists(),
-            not trace_report.is_file(),
-            ]):
-        print(f"Bad trace report: {trace_report}")
-        return {}
-    else:
-        if trace_report.is_file():
-            return extract_columns_tsv(trace_report)
-        else:
-            print(f"Trace report is not a file: {trace_report}")
-            return {}
-
-
-
-def get_child_jobs(trace_report:Path) -> List[int]:
-    child_jobs = []
-    with open(trace_report) as f:
-        for line in f:
-            splitted = line.split('\t')
-            job_id = splitted[2]
-            job_name = splitted[5]
-
-
-def _hash_file(path:Path) -> int:
-    return hash(path.read_bytes())
-
-
-with open('tmp/slurm_tasks1.yaml', 'w') as file:
-        yaml.dump(get_user_jobs(user='kbajbekov'), file)
 
 # Нам нужно получить минимальную информацию обо всех задачах в пайплайне
 # Т.к. Slurm быстро всё удаляет, будем парсить данные из трейса пайплайна и соотносить с полученной информацией
 usr = 'kbajbekov'
-squeue_data = get_user_jobs(user=usr)
-trace_data = parse_trace_report(Path('/home/kbajbekov/raid/kbajbekov/common_share/github/proj_prefect/tmp/trace_report.txt'))
+trace_f = Path('/home/kbajbekov/raid/kbajbekov/common_share/github/proj_prefect/tmp/trace_report.txt')
+main_job_id:int = 10000000
+
 
 while True:
+    # Читаем данные из squeue и трейса
+    squeue_data = get_user_jobs(user=usr)
+    # Извлекаем данные о главной задаче
+    task_data = squeue_data.get(main_job_id, {})
+    # Добавляем данные о дочерних задачах
+    child_tasks_data = add_child_jobs(squeue_data, main_job_id)
+    task_data['child_jobs'] = child_tasks_data # type: ignore
+    with open('tmp/slurm_tasks1.yaml', 'w') as file:
+        yaml.dump(task_data, file)
+
+    
+
+
     time.sleep(10)
