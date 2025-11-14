@@ -168,7 +168,6 @@ def get_child_jobs(squeue_data:Dict[int, Dict[str, Union[str, int]]],
                         job_data['exit_code'] = int(f.readline().strip())
                 else:
                     print(f"Не найден .exitcode в:\n{job_data['work_dir']}")
-            else:
     return child_jobs
 
 def write_yaml(data:Dict, path:Path):
