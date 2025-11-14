@@ -175,13 +175,14 @@ if started_proc:
 while True:
     # Читаем данные из squeue и трейса
     squeue_data = get_user_jobs(user=usr)
+    print(squeue_data)
     print(f"received squeue_data, keys:\n{'\n'.join([str(s) for s in squeue_data.keys()])}")
     # Извлекаем данные о главной задаче
     task_data = squeue_data.get(main_job_id, {})
     # Добавляем данные о дочерних задачах
     child_tasks_data = add_child_jobs(squeue_data, main_job_id)
     task_data['child_jobs'] = child_tasks_data # type: ignore
-    print(task_data)
+    #print(task_data)
     with open('/mnt/cephfs8_rw/nanopore2/test_space/results/7777/45gd/logs/slurm/slurm_tasks1.yaml', 'w') as file:
         yaml.dump(task_data, file)
 
