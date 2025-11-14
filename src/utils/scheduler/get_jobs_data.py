@@ -117,8 +117,6 @@ def get_user_jobs(user: Optional[str] = None) -> Dict[int, Dict[str, Union[str, 
     jobs:List[Dict[Union[int, str], Any]] = j.get("jobs") or []
     result = {}
     for job in jobs:
-        print(job.keys())
-        exit()
         # tolerant field extraction (squeue json keys can vary by version)
         jid = job.get('job_id') 
         if not jid:
@@ -177,6 +175,8 @@ if started_proc:
 while True:
     # Читаем данные из squeue и трейса
     squeue_data = get_user_jobs(user=usr)
+    with open('/mnt/cephfs8_rw/nanopore2/test_space/results/7777/45gd/logs/slurm/slurm_squeue.yaml', 'w') as file:
+        yaml.dump(squeue_data, file)
     #print(squeue_data)
     print(f"received squeue_data, keys:\n{'\n'.join([str(s) for s in squeue_data.keys()])}")
     # Извлекаем данные о главной задаче
@@ -192,3 +192,6 @@ while True:
 
 
     time.sleep(10)
+
+
+    #['account', 'accrue_time', 'admin_comment', 'allocating_node', 'array_job_id', 'array_task_id', 'array_max_tasks', 'array_task_string', 'association_id', 'batch_features', 'batch_flag', 'batch_host', 'flags', 'burst_buffer', 'burst_buffer_state', 'cluster', 'cluster_features', 'command', 'comment', 'container', 'container_id', 'contiguous', 'core_spec', 'thread_spec', 'cores_per_socket', 'billable_tres', 'cpus_per_task', 'cpu_frequency_minimum', 'cpu_frequency_maximum', 'cpu_frequency_governor', 'cpus_per_tres', 'cron', 'deadline', 'delay_boot', 'dependency', 'derived_exit_code', 'eligible_time', 'end_time', 'excluded_nodes', 'exit_code', 'extra', 'failed_node', 'features', 'federation_origin', 'federation_siblings_active', 'federation_siblings_viable', 'gres_detail', 'group_id', 'group_name', 'het_job_id', 'het_job_id_set', 'het_job_offset', 'job_id', 'job_resources', 'job_size_str', 'job_state', 'last_sched_evaluation', 'licenses', 'licenses_allocated', 'mail_type', 'mail_user', 'max_cpus', 'max_nodes', 'mcs_label', 'memory_per_tres', 'name', 'network', 'nodes', 'nice', 'tasks_per_core', 'tasks_per_tres', 'tasks_per_node', 'tasks_per_socket', 'tasks_per_board', 'cpus', 'node_count', 'tasks', 'partition', 'prefer', 'memory_per_cpu', 'memory_per_node', 'minimum_cpus_per_node', 'minimum_tmp_disk_per_node', 'power', 'preempt_time', 'preemptable_time', 'pre_sus_time', 'hold', 'priority', 'priority_by_partition', 'profile', 'qos', 'reboot', 'required_nodes', 'required_switches', 'requeue', 'resize_time', 'restart_cnt', 'resv_name', 'scheduled_nodes', 'segment_size', 'selinux_context', 'shared', 'sockets_per_board', 'sockets_per_node', 'start_time', 'state_description', 'state_reason', 'standard_input', 'standard_output', 'standard_error', 'stdin_expanded', 'stdout_expanded', 'stderr_expanded', 'submit_time', 'suspend_time', 'system_comment', 'time_limit', 'time_minimum', 'threads_per_core', 'tres_bind', 'tres_freq', 'tres_per_job', 'tres_per_node', 'tres_per_socket', 'tres_per_task', 'tres_req_str', 'tres_alloc_str', 'user_id', 'user_name', 'maximum_switch_wait_time', 'wckey', 'current_working_directory']
