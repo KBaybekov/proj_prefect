@@ -138,14 +138,19 @@ def get_user_jobs(user: Optional[str] = None) -> Dict[int, Dict[str, Union[str, 
             "exit_code": job.get('exit_code', {}).get('number'),
             "work_dir": job.get('current_working_directory')
         }
-
+        for property, squeue_property in {'start':'start_time', 'limit':'end_time'}.items():
+            time_val = None
+            if entry['status'] == 'RUNNING':
+                time_val = timestamp_to_datetime(job.get(squeue_property, {}).get('number', 0))
+            entry.update({property: time_val})
         result[jid] = entry
     return result
 
+def timestamp_to_datetime(timestamp: int) -> datetime.datetime:
+    return datetime.datetime.fromtimestamp(timestamp)
 
 def update_task_data(task_data, squeue_data, is_main_proc:bool):
-    def timestamp_to_datetime(timestamp: int) -> datetime.datetime:
-        return datetime.datetime.fromtimestamp(timestamp)
+    
     job_id = task_data['job_id']
     job_data = squeue_data.get(job_id, {})
     if job_data:
@@ -153,8 +158,7 @@ def update_task_data(task_data, squeue_data, is_main_proc:bool):
         task_data['status'] = status
         if status == 'RUNNING':
             for property, slurm_property in {'start':'start_time', 'limit':'end_time'}.items():
-                if property not in task_data:
-                    task_data[property] = timestamp_to_datetime(job_data.get(slurm_property, {}).get('number', 0))
+                task_data[property] = timestamp_to_datetime(job_data.get(slurm_property, {}).get('number', 0))
     else:
         # Для главного процесса
         if is_main_proc:
@@ -178,6 +182,7 @@ def get_child_jobs(squeue_data:Dict[int, Dict[str, Union[str, int]]],
     for job_id, job_data in squeue_data.items():
         if job_data['parent_job_id'] == main_job_id:
             if job_id not in child_jobs:
+                job_data['created'] = datetime.datetime.now()
                 child_jobs.update({job_id:job_data})
             else:
                 child_jobs[job_id] = job_data
@@ -209,6 +214,7 @@ if started_proc:
     print(f"Процесс запущен с PID {proc_pid}, job_id {main_job_id}")
     # Извлекаем данные о главной задаче
     task_data = get_user_jobs(user=usr).get(main_job_id, {})
+    task_data['created'] = datetime.datetime.now()
     task_data['child_jobs'] = {}
     print(task_data)
 
