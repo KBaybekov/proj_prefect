@@ -148,28 +148,26 @@ def update_task_data(task_data, squeue_data, is_main_proc:bool):
         return datetime.datetime.fromtimestamp(timestamp)
     job_id = task_data['job_id']
     job_data = squeue_data.get(job_id, {})
-    if not job_data:
+    if job_data:
+        status = job_data.get('status', 'UNKNOWN')
+        task_data['status'] = status
+        if status == 'RUNNING':
+            for property, slurm_property in {'start':'start_time', 'limit':'end_time'}.items():
+                if property not in task_data:
+                    task_data[property] = timestamp_to_datetime(job_data.get(slurm_property, {}).get('number', 0))
+    else:
         # Для главного процесса
         if is_main_proc:
-            collect_completed_process_exitcode(proc)
+            task_data['exit_code'] = collect_completed_process_exitcode(proc)
         else:
             # Для дочерних процессов
-            exit_code = job_data.get('exit_code', None)
-            if exit_code is None:
-                exit_code_f = Path(job_data['work_dir'], '.exitcode').resolve()
-                if exit_code_f.exists():
-                # Читаем первую строку и преобразуем в число
-                    with open(exit_code_f, 'r') as f:
-                        job_data['exit_code'] = int(f.readline().strip())
-                else:
-                    print(f"Не найден .exitcode в:\n{job_data['work_dir']}")
-
-    status = job_data.get('status', 'UNKNOWN')
-    task_data['status']
-    if status == 'RUNNING':
-        for property, slurm_property in {'start':'start_time', 'limit':'end_time'}.items():
-            if property not in task_data:
-                task_data[property] = timestamp_to_datetime(job_data.get(slurm_property, {}).get('number', 0))
+            exit_code_f = Path(task_data.get('work_dir'), '.exitcode').resolve()
+            if exit_code_f.exists():
+            # Читаем первую строку и преобразуем в число
+                with open(exit_code_f, 'r') as f:
+                    job_data['exit_code'] = int(f.readline().strip())
+            else:
+                print(f"Не найден .exitcode в:\n{job_data['work_dir']}")
     return task_data
 
 
@@ -215,6 +213,7 @@ if started_proc:
     print(task_data)
 
 while True:
+    time.sleep(5)
     # Читаем данные из squeue и трейса
     squeue_data = get_user_jobs(user=usr)
     with open('/mnt/cephfs8_rw/nanopore2/test_space/results/7777/45gd/logs/slurm/slurm_squeue.yaml', 'w') as file:
@@ -228,7 +227,7 @@ while True:
     if task_data['exit_code']:
         write_yaml(task_data, yml)
         exit()
-    time.sleep(5)
+    
 
 
     #['account', 'accrue_time', 'admin_comment', 'allocating_node', 'array_job_id', 'array_task_id', 'array_max_tasks', 'array_task_string', 'association_id', 'batch_features', 'batch_flag', 'batch_host', 'flags', 'burst_buffer', 'burst_buffer_state', 'cluster', 'cluster_features', 'command', 'comment', 'container', 'container_id', 'contiguous', 'core_spec', 'thread_spec', 'cores_per_socket', 'billable_tres', 'cpus_per_task', 'cpu_frequency_minimum', 'cpu_frequency_maximum', 'cpu_frequency_governor', 'cpus_per_tres', 'cron', 'deadline', 'delay_boot', 'dependency', 'derived_exit_code', 'eligible_time', 'end_time', 'excluded_nodes', 'exit_code', 'extra', 'failed_node', 'features', 'federation_origin', 'federation_siblings_active', 'federation_siblings_viable', 'gres_detail', 'group_id', 'group_name', 'het_job_id', 'het_job_id_set', 'het_job_offset', 'job_id', 'job_resources', 'job_size_str', 'job_state', 'last_sched_evaluation', 'licenses', 'licenses_allocated', 'mail_type', 'mail_user', 'max_cpus', 'max_nodes', 'mcs_label', 'memory_per_tres', 'name', 'network', 'nodes', 'nice', 'tasks_per_core', 'tasks_per_tres', 'tasks_per_node', 'tasks_per_socket', 'tasks_per_board', 'cpus', 'node_count', 'tasks', 'partition', 'prefer', 'memory_per_cpu', 'memory_per_node', 'minimum_cpus_per_node', 'minimum_tmp_disk_per_node', 'power', 'preempt_time', 'preemptable_time', 'pre_sus_time', 'hold', 'priority', 'priority_by_partition', 'profile', 'qos', 'reboot', 'required_nodes', 'required_switches', 'requeue', 'resize_time', 'restart_cnt', 'resv_name', 'scheduled_nodes', 'segment_size', 'selinux_context', 'shared', 'sockets_per_board', 'sockets_per_node', 'start_time', 'state_description', 'state_reason', 'standard_input', 'standard_output', 'standard_error', 'stdin_expanded', 'stdout_expanded', 'stderr_expanded', 'submit_time', 'suspend_time', 'system_comment', 'time_limit', 'time_minimum', 'threads_per_core', 'tres_bind', 'tres_freq', 'tres_per_job', 'tres_per_node', 'tres_per_socket', 'tres_per_task', 'tres_req_str', 'tres_alloc_str', 'user_id', 'user_name', 'maximum_switch_wait_time', 'wckey', 'current_working_directory']
