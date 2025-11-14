@@ -166,7 +166,7 @@ def update_task_data(task_data, squeue_data, is_main_proc:bool):
     status = job_data.get('status', 'UNKNOWN')
     task_data['status']
     if status == 'RUNNING':
-        for property, slurm_property in {'start':'start_time', 'limit':'end_time'}:
+        for property, slurm_property in {'start':'start_time', 'limit':'end_time'}.items():
             if property not in task_data:
                 task_data[property] = timestamp_to_datetime(job_data.get(slurm_property, {}).get('number', 0))
     return task_data
