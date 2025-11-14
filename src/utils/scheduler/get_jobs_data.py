@@ -117,10 +117,8 @@ def get_user_jobs(user: Optional[str] = None) -> Dict[int, Dict[str, Union[str, 
     jobs:List[Dict[Union[int, str], Any]] = j.get("jobs") or []
     result = {}
     for job in jobs:
-        for key in job:
-            if isinstance(key, str):
-                if 'comment' in key:
-                    print(job['job_id'], job.get(key))
+        print(job.keys())
+        exit()
         # tolerant field extraction (squeue json keys can vary by version)
         jid = job.get('job_id') 
         if not jid:
