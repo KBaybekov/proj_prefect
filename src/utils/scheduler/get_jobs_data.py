@@ -171,7 +171,7 @@ if started_proc:
 while True:
     # Читаем данные из squeue и трейса
     squeue_data = get_user_jobs(user=usr)
-    print(f"received squeue_data, keys:\n{'\n'.join(list(squeue_data.keys()))}")
+    print(f"received squeue_data, keys:\n{'\n'.join([str(s) for s in squeue_data.keys()])}")
     # Извлекаем данные о главной задаче
     task_data = squeue_data.get(main_job_id, {})
     # Добавляем данные о дочерних задачах
