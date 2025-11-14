@@ -8,6 +8,7 @@ from csv import reader as csv_reader
 import yaml
 import time
 from shlex import split as shlex_split
+import datetime
 
 
 # helpers
@@ -97,6 +98,9 @@ def get_user_jobs(user: Optional[str] = None) -> Dict[int, Dict[str, Union[str, 
     Возвращает словарь job_id -> summary_dict, полученный из `squeue --json -u user`.
     Не вызывает scontrol (чтобы быть лёгким).
     """
+    def timestamp_to_datetime(timestamp: int) -> datetime.datetime:
+        return datetime.datetime.fromtimestamp(timestamp)
+
     if user is None:
         user = os.getenv("USER") or getpass.getuser()
     rc, out, _err = _run_cmd(["squeue", "--json", "-u", user], timeout=15)
@@ -120,7 +124,7 @@ def get_user_jobs(user: Optional[str] = None) -> Dict[int, Dict[str, Union[str, 
         entry = {
             "job_id": jid,
             "name": job.get('name'),
-            "array_job_id": job.get('array_job_id'),
+            "array_job_id": job.get('array_job_id', {}).get('number'),
             "parent_job_id": 0
                                 if not job.get('comment', '')
                                 else int(job.get('comment', '').removeprefix("parent_job_id ")),
@@ -135,8 +139,8 @@ def get_user_jobs(user: Optional[str] = None) -> Dict[int, Dict[str, Union[str, 
                         if job.get('standard_output', '') == '/dev/null'
                         else job.get('standard_output', ''),
             "exit_code": job.get('exit_code', {}).get('number'),
-            "start": job.get('start_time', {}).get('number'),
-            "limit": job.get('end_time', {}).get('number'),
+            "start": timestamp_to_datetime(job.get('start_time', {}).get('number', 0)),
+            "limit": timestamp_to_datetime(job.get('end_time', {}).get('number', 0)),
             "work_dir": job.get('current_working_directory')
         }
         result[jid] = entry
@@ -174,10 +178,10 @@ while True:
     print(f"received squeue_data, keys:\n{'\n'.join([str(s) for s in squeue_data.keys()])}")
     # Извлекаем данные о главной задаче
     task_data = squeue_data.get(main_job_id, {})
-    print(task_data)
     # Добавляем данные о дочерних задачах
     child_tasks_data = add_child_jobs(squeue_data, main_job_id)
     task_data['child_jobs'] = child_tasks_data # type: ignore
+    print(task_data)
     with open('/mnt/cephfs8_rw/nanopore2/test_space/results/7777/45gd/logs/slurm/slurm_tasks1.yaml', 'w') as file:
         yaml.dump(task_data, file)
 
