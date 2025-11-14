@@ -9,7 +9,7 @@ SAMPLE_ID="${SAMPLE_NAME}_${SAMPLE_FINGERPRINT}"
 PIPELINE_NAME="basecalling"
 GPUS_4_BASECALLING=4
 MAIN_RES_DIR="/raid/kbajbekov/common_share/github/proj_prefect/test_space/results"
-MAIN_WORK_DIR="/raid/kbajbekov/common_share/github/proj_prefect/test_space/processing"
+MAIN_WORK_DIR="/mnt/cephfs8_rw/nanopore2/test_space/processing/"
 PIPELINE_TIMEOUT="3-00:00"
 
 TIMESTAMP=$(date +"%H-%M-%S_%d-%m-%Y")
