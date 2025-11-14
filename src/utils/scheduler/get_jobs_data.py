@@ -174,6 +174,7 @@ while True:
     print(f"received squeue_data, keys:\n{'\n'.join([str(s) for s in squeue_data.keys()])}")
     # Извлекаем данные о главной задаче
     task_data = squeue_data.get(main_job_id, {})
+    print(task_data)
     # Добавляем данные о дочерних задачах
     child_tasks_data = add_child_jobs(squeue_data, main_job_id)
     task_data['child_jobs'] = child_tasks_data # type: ignore
