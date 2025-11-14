@@ -117,6 +117,7 @@ def get_user_jobs(user: Optional[str] = None) -> Dict[int, Dict[str, Union[str, 
     jobs:List[Dict[Union[int, str], Any]] = j.get("jobs") or []
     result = {}
     for job in jobs:
+        print(job)
         # tolerant field extraction (squeue json keys can vary by version)
         jid = job.get('job_id') 
         if not jid:
