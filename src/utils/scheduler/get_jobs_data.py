@@ -97,9 +97,7 @@ def get_user_jobs(user: Optional[str] = None) -> Dict[int, Dict[str, Union[str, 
     Возвращает словарь job_id -> summary_dict, полученный из `squeue --json -u user`.
     Не вызывает scontrol (чтобы быть лёгким).
     """
-    def timestamp_to_datetime(timestamp: int) -> datetime.datetime:
-        return datetime.datetime.fromtimestamp(timestamp)
-
+    
     if user is None:
         user = os.getenv("USER") or getpass.getuser()
     rc, out, _err = _run_cmd(["squeue", "--json", "-u", user], timeout=15)
@@ -140,11 +138,38 @@ def get_user_jobs(user: Optional[str] = None) -> Dict[int, Dict[str, Union[str, 
             "exit_code": job.get('exit_code', {}).get('number'),
             "work_dir": job.get('current_working_directory')
         }
-        if entry['status'] == 'RUNNING':
-            entry.update({"start": timestamp_to_datetime(job.get('start_time', {}).get('number', 0)),
-            "limit": timestamp_to_datetime(job.get('end_time', {}).get('number', 0))})
+
         result[jid] = entry
     return result
+
+
+def update_task_data(task_data, squeue_data, is_main_proc:bool):
+    def timestamp_to_datetime(timestamp: int) -> datetime.datetime:
+        return datetime.datetime.fromtimestamp(timestamp)
+    job_id = task_data['job_id']
+    job_data = squeue_data.get(job_id, {})
+    if not job_data:
+        # Для главного процесса
+        if is_main_proc:
+            collect_completed_process_exitcode(proc)
+        else:
+            # Для дочерних процессов
+            if job_data['exit_code'] is None:
+                exit_code_f = Path(job_data['work_dir'], '.exitcode').resolve()
+                if exit_code_f.exists():
+                # Читаем первую строку и преобразуем в число
+                    with open(exit_code_f, 'r') as f:
+                        job_data['exit_code'] = int(f.readline().strip())
+                else:
+                    print(f"Не найден .exitcode в:\n{job_data['work_dir']}")
+
+    status = job_data.get('status', 'UNKNOWN')
+    task_data['status']
+    if status == 'RUNNING':
+        for property, slurm_property in {'start':'start_time', 'limit':'end_time'}:
+            if property not in task_data:
+                task_data[property] = timestamp_to_datetime(job_data.get(slurm_property, {}).get('number', 0))
+    return task_data
 
 
 def get_child_jobs(squeue_data:Dict[int, Dict[str, Union[str, int]]],
@@ -157,17 +182,9 @@ def get_child_jobs(squeue_data:Dict[int, Dict[str, Union[str, int]]],
                 child_jobs.update({job_id:job_data})
             else:
                 child_jobs[job_id] = job_data
-    # Если какие-то из ранее найденных дочерних задач больше не существуют, проверяем их exit_code
+    # Обновляем данные по уже найденным
     for job_id, job_data in child_jobs.items():
-        if job_id not in squeue_data:
-            if job_data['exit_code'] is None:
-                exit_code_f = Path(job_data['work_dir'], '.exitcode').resolve()
-                if exit_code_f.exists():
-                # Читаем первую строку и преобразуем в число
-                    with open(exit_code_f, 'r') as f:
-                        job_data['exit_code'] = int(f.readline().strip())
-                else:
-                    print(f"Не найден .exitcode в:\n{job_data['work_dir']}")
+        update_task_data(job_data,squeue_data, False)
     return child_jobs
 
 def write_yaml(data:Dict, path:Path):
@@ -204,14 +221,12 @@ while True:
     #print(squeue_data)
     print(f"received squeue_data, keys:\n{'\n'.join([str(s) for s in squeue_data.keys()])}")
     # Проверяем, жив ли основной процесс; если нет, собираем exit_code и выходим
-    proc_exitcode = collect_completed_process_exitcode(proc)
-    if collect_completed_process_exitcode(proc):
-        task_data['exit_code'] = proc_exitcode
-        write_yaml(task_data, yml)
-        exit()
+    task_data = update_task_data(task_data, squeue_data, True)
     # Добавляем данные о дочерних задачах
     task_data['child_jobs'] = get_child_jobs(squeue_data, main_job_id, task_data['child_jobs'])
-    
+    if task_data['exit_code']:
+        write_yaml(task_data, yml)
+        exit()
     time.sleep(5)
 
 
