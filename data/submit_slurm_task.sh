@@ -3,8 +3,8 @@
 
 
 # --- пользовательские переменные (редактировать перед запуском) ---
-SAMPLE_NAME="7701"
-SAMPLE_FINGERPRINT="12xy"
+SAMPLE_NAME="7777"
+SAMPLE_FINGERPRINT="45gd"
 SAMPLE_ID="${SAMPLE_NAME}_${SAMPLE_FINGERPRINT}"
 PIPELINE_NAME="basecalling"
 GPUS_4_BASECALLING=4
@@ -56,7 +56,7 @@ export GPUS_4_BASECALLING=${GPUS_4_BASECALLING}
 nextflow run nxf-csp/ont-basecalling/ \
   --sample ${SAMPLE_ID} \
   --run_id ${J_NAME} \
-  --input /raid/kbajbekov/common_share/github/proj_prefect/test_space/input_data/full_size_fast5_dataset_1Tb.csv \
+  --input /raid/kbajbekov/common_share/github/nxf-csp/ont-basecalling/tests/test_samplesheet.csv \
   --outdir ${JOB_RESULT_DIR} \
 
 EOF
