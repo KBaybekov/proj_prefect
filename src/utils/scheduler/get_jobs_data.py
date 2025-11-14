@@ -86,7 +86,6 @@ def collect_completed_process_exitcode(p:subprocess.Popen) -> Optional[int]:
     Возвращает список результатов: {pid, returncode, stdout, stderr, cmd}.
     Удаляет завершённые процессы из списка.
     """
-
     if p.poll() is None:
         return None
     else:
@@ -139,10 +138,11 @@ def get_user_jobs(user: Optional[str] = None) -> Dict[int, Dict[str, Union[str, 
                         if job.get('standard_output', '') == '/dev/null'
                         else job.get('standard_output', ''),
             "exit_code": job.get('exit_code', {}).get('number'),
-            "start": timestamp_to_datetime(job.get('start_time', {}).get('number', 0)),
-            "limit": timestamp_to_datetime(job.get('end_time', {}).get('number', 0)),
             "work_dir": job.get('current_working_directory')
         }
+        if entry['status'] == 'RUNNING':
+            entry.update({"start": timestamp_to_datetime(job.get('start_time', {}).get('number', 0)),
+            "limit": timestamp_to_datetime(job.get('end_time', {}).get('number', 0))})
         result[jid] = entry
     return result
 
@@ -150,19 +150,37 @@ def get_user_jobs(user: Optional[str] = None) -> Dict[int, Dict[str, Union[str, 
 def get_child_jobs(squeue_data:Dict[int, Dict[str, Union[str, int]]],
                    main_job_id:int,
                    child_jobs:Dict[int, Dict[str, Union[str, int]]]) -> Dict[int, Dict[str, Union[str, int]]]:
+    # Получаем дочерние задачи; обновляем данные по уже найденным
     for job_id, job_data in squeue_data.items():
         if job_data['parent_job_id'] == main_job_id:
             if job_id not in child_jobs:
                 child_jobs.update({job_id:job_data})
             else:
                 child_jobs[job_id] = job_data
+    # Если какие-то из ранее найденных дочерних задач больше не существуют, проверяем их exit_code
+    for job_id, job_data in child_jobs.items():
+        if job_id not in squeue_data:
+            if job_data['exit_code'] is None:
+                exit_code_f = Path(job_data['work_dir'], '.exitcode').resolve()
+                if exit_code_f.exists():
+                # Читаем первую строку и преобразуем в число
+                    with open(exit_code_f, 'r') as f:
+                        job_data['exit_code'] = int(f.readline().strip())
+                else:
+                    print(f"Не найден .exitcode в:\n{job_data['work_dir']}")
+            else:
     return child_jobs
+
+def write_yaml(data:Dict, path:Path):
+    with open(path, 'w') as file:
+        yaml.dump(data, file)
 
 
 # Нам нужно получить минимальную информацию обо всех задачах в пайплайне
 # Т.к. Slurm быстро всё удаляет, будем парсить данные из трейса пайплайна и соотносить с полученной информацией
 usr = 'kbajbekov'
-trace_f = Path('/home/kbajbekov/raid/kbajbekov/common_share/github/proj_prefect/tmp/trace_report.txt')
+yml = Path('/mnt/cephfs8_rw/nanopore2/test_space/results/7777/45gd/logs/slurm/slurm_tasks1.yaml')
+
 # Запускаем процесс
 print('starting...')
 started_proc = _start_background_cmd(cmd=[
@@ -186,16 +204,15 @@ while True:
         yaml.dump(squeue_data, file)
     #print(squeue_data)
     print(f"received squeue_data, keys:\n{'\n'.join([str(s) for s in squeue_data.keys()])}")
+    # Проверяем, жив ли основной процесс; если нет, собираем exit_code и выходим
+    proc_exitcode = collect_completed_process_exitcode(proc)
+    if collect_completed_process_exitcode(proc):
+        task_data['exit_code'] = proc_exitcode
+        write_yaml(task_data, yml)
+        exit()
     # Добавляем данные о дочерних задачах
     task_data['child_jobs'] = get_child_jobs(squeue_data, main_job_id, task_data['child_jobs'])
     
-    #print(task_data)
-    with open('/mnt/cephfs8_rw/nanopore2/test_space/results/7777/45gd/logs/slurm/slurm_tasks1.yaml', 'w') as file:
-        yaml.dump(task_data, file)
-
-    
-
-
     time.sleep(15)
 
 
