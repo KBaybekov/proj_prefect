@@ -48,12 +48,13 @@ export NXF_LOG_FILE="${LOG_DIR}/nextflow/nxf_${J_NAME}.log"
 export NXF_DATE_FORMAT="dd-MM-yyyy_HH:mm:ss"
 export NXF_ANSI_LOG=false
 export NXF_DISABLE_CHECK_LATEST=true
-export NXF_OPTS=-name=nxf_${J_NAME}_${TIMESTAMP} resume=true
 
 # Pipeline variables
 export GPUS_4_BASECALLING=${GPUS_4_BASECALLING}
 
 nextflow run nxf-csp/ont-basecalling/ \
+  -resume \
+  -name=nxf_${J_NAME}_${TIMESTAMP}
   --sample ${SAMPLE_ID} \
   --run_id ${J_NAME} \
   --input /raid/kbajbekov/common_share/github/nxf-csp/ont-basecalling/tests/test_samplesheet.csv \

@@ -19,9 +19,9 @@ def _run_cmd(cmd: List[str], timeout: Optional[int] = 10):
     except subprocess.TimeoutExpired:
         return 124, "", "timeout"
 
-def _start_background_cmd(cmd: Union[List[str], str]) -> Optional[tuple[int, subprocess.Popen]]:
+def _start_background_cmd(cmd: Union[List[str], str]) -> Optional[tuple[subprocess.Popen[str], int, int]]:
     """
-    Запускает команду в фоне и возвращает объект Popen.
+    Запускает команду в фоне и возвращает process, process.pid, job_id.
     """
     if isinstance(cmd, str):
             try:
@@ -40,13 +40,44 @@ def _start_background_cmd(cmd: Union[List[str], str]) -> Optional[tuple[int, sub
             stderr=subprocess.PIPE,
             text=True
         )
-        
+        job_id = monitor_sbatch_output(process)
         print(f"[PID {process.pid}] Запущена команда: {' '.join(cmd)}")
-        return (process.pid, process)
+        return (process, process.pid, job_id)
     except Exception as e:
         print(f"Ошибка при запуске команды {cmd}: {e}")
         return None
 
+def monitor_sbatch_output(proc: subprocess.Popen) -> int:
+    """
+    Читает stdout процесса построчно в реальном времени.
+    """
+    job_id = 0
+    if proc.stdout:
+        try:
+            for line in proc.stdout:  # proc.stdout — итератор по строкам
+                line = line.strip()
+                if not line:
+                    continue
+                extracted_job_id = extract_slurm_job_id(line)
+                if extracted_job_id:
+                    job_id = extracted_job_id
+                    break
+        except Exception as e:
+            print(f"Ошибка при чтении stdout: {e}")
+        finally:
+            proc.stdout.close()
+            return job_id  # ID найден — можно прекратить мониторинг
+
+def extract_slurm_job_id(line: str) -> Optional[int]:
+    """
+    Извлекает ID задачи из строки вида:
+        'Submitted batch job 35904'
+    """
+    if line.startswith("Submitted batch job"):
+        parts = line.split()
+        if len(parts) == 4 and parts[3].isdigit():
+            return int(parts[3])
+    return None
 
 def collect_completed_process_exitcode(p:subprocess.Popen) -> Optional[int]:
     """
@@ -125,9 +156,18 @@ def add_child_jobs(squeue_data:Dict[int, Dict[str, Union[str, int]]],
 # Т.к. Slurm быстро всё удаляет, будем парсить данные из трейса пайплайна и соотносить с полученной информацией
 usr = 'kbajbekov'
 trace_f = Path('/home/kbajbekov/raid/kbajbekov/common_share/github/proj_prefect/tmp/trace_report.txt')
-main_job_id:int = 10000000
+# Запускаем процесс
+print('starting...')
+started_proc = _start_background_cmd(cmd=[
+                                       'bash',
+                                       '/raid/kbajbekov/common_share/github/proj_prefect/data/submit_slurm_task.sh'
+                                       ])
+print('started')
 
-
+if started_proc:
+    proc, proc_pid, main_job_id = started_proc
+    print(f"Процесс запущен с PID {proc_pid}, job_id {main_job_id}")
+    
 while True:
     # Читаем данные из squeue и трейса
     squeue_data = get_user_jobs(user=usr)
@@ -136,7 +176,7 @@ while True:
     # Добавляем данные о дочерних задачах
     child_tasks_data = add_child_jobs(squeue_data, main_job_id)
     task_data['child_jobs'] = child_tasks_data # type: ignore
-    with open('tmp/slurm_tasks1.yaml', 'w') as file:
+    with open('/mnt/cephfs8_rw/nanopore2/test_space/results/7777/45gd/logs/slurm/slurm_tasks1.yaml', 'w') as file:
         yaml.dump(task_data, file)
 
     
