@@ -147,12 +147,15 @@ def get_user_jobs(user: Optional[str] = None) -> Dict[int, Dict[str, Union[str, 
     return result
 
 
-def add_child_jobs(squeue_data:Dict[int, Dict[str, Union[str, int]]],
-                   main_job_id:int) -> Dict[str, Union[str, int]]:
-    child_jobs = {}
+def get_child_jobs(squeue_data:Dict[int, Dict[str, Union[str, int]]],
+                   main_job_id:int,
+                   child_jobs:Dict[int, Dict[str, Union[str, int]]]) -> Dict[int, Dict[str, Union[str, int]]]:
     for job_id, job_data in squeue_data.items():
         if job_data['parent_job_id'] == main_job_id:
-            child_jobs.update({job_id:job_data})
+            if job_id not in child_jobs:
+                child_jobs.update({job_id:job_data})
+            else:
+                child_jobs[job_id] = job_data
     return child_jobs
 
 
@@ -171,6 +174,10 @@ print('started')
 if started_proc:
     proc, proc_pid, main_job_id = started_proc
     print(f"Процесс запущен с PID {proc_pid}, job_id {main_job_id}")
+    # Извлекаем данные о главной задаче
+    task_data = get_user_jobs(user=usr).get(main_job_id, {})
+    task_data['child_jobs'] = {}
+    print(task_data)
 
 while True:
     # Читаем данные из squeue и трейса
@@ -179,11 +186,9 @@ while True:
         yaml.dump(squeue_data, file)
     #print(squeue_data)
     print(f"received squeue_data, keys:\n{'\n'.join([str(s) for s in squeue_data.keys()])}")
-    # Извлекаем данные о главной задаче
-    task_data = squeue_data.get(main_job_id, {})
     # Добавляем данные о дочерних задачах
-    child_tasks_data = add_child_jobs(squeue_data, main_job_id)
-    task_data['child_jobs'] = child_tasks_data # type: ignore
+    task_data['child_jobs'] = get_child_jobs(squeue_data, main_job_id, task_data['child_jobs'])
+    
     #print(task_data)
     with open('/mnt/cephfs8_rw/nanopore2/test_space/results/7777/45gd/logs/slurm/slurm_tasks1.yaml', 'w') as file:
         yaml.dump(task_data, file)
@@ -191,7 +196,7 @@ while True:
     
 
 
-    time.sleep(10)
+    time.sleep(15)
 
 
     #['account', 'accrue_time', 'admin_comment', 'allocating_node', 'array_job_id', 'array_task_id', 'array_max_tasks', 'array_task_string', 'association_id', 'batch_features', 'batch_flag', 'batch_host', 'flags', 'burst_buffer', 'burst_buffer_state', 'cluster', 'cluster_features', 'command', 'comment', 'container', 'container_id', 'contiguous', 'core_spec', 'thread_spec', 'cores_per_socket', 'billable_tres', 'cpus_per_task', 'cpu_frequency_minimum', 'cpu_frequency_maximum', 'cpu_frequency_governor', 'cpus_per_tres', 'cron', 'deadline', 'delay_boot', 'dependency', 'derived_exit_code', 'eligible_time', 'end_time', 'excluded_nodes', 'exit_code', 'extra', 'failed_node', 'features', 'federation_origin', 'federation_siblings_active', 'federation_siblings_viable', 'gres_detail', 'group_id', 'group_name', 'het_job_id', 'het_job_id_set', 'het_job_offset', 'job_id', 'job_resources', 'job_size_str', 'job_state', 'last_sched_evaluation', 'licenses', 'licenses_allocated', 'mail_type', 'mail_user', 'max_cpus', 'max_nodes', 'mcs_label', 'memory_per_tres', 'name', 'network', 'nodes', 'nice', 'tasks_per_core', 'tasks_per_tres', 'tasks_per_node', 'tasks_per_socket', 'tasks_per_board', 'cpus', 'node_count', 'tasks', 'partition', 'prefer', 'memory_per_cpu', 'memory_per_node', 'minimum_cpus_per_node', 'minimum_tmp_disk_per_node', 'power', 'preempt_time', 'preemptable_time', 'pre_sus_time', 'hold', 'priority', 'priority_by_partition', 'profile', 'qos', 'reboot', 'required_nodes', 'required_switches', 'requeue', 'resize_time', 'restart_cnt', 'resv_name', 'scheduled_nodes', 'segment_size', 'selinux_context', 'shared', 'sockets_per_board', 'sockets_per_node', 'start_time', 'state_description', 'state_reason', 'standard_input', 'standard_output', 'standard_error', 'stdin_expanded', 'stdout_expanded', 'stderr_expanded', 'submit_time', 'suspend_time', 'system_comment', 'time_limit', 'time_minimum', 'threads_per_core', 'tres_bind', 'tres_freq', 'tres_per_job', 'tres_per_node', 'tres_per_socket', 'tres_per_task', 'tres_req_str', 'tres_alloc_str', 'user_id', 'user_name', 'maximum_switch_wait_time', 'wckey', 'current_working_directory']
