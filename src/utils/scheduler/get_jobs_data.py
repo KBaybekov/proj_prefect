@@ -154,7 +154,8 @@ def update_task_data(task_data, squeue_data, is_main_proc:bool):
             collect_completed_process_exitcode(proc)
         else:
             # Для дочерних процессов
-            if job_data['exit_code'] is None:
+            exit_code = job_data.get('exit_code', None)
+            if exit_code is None:
                 exit_code_f = Path(job_data['work_dir'], '.exitcode').resolve()
                 if exit_code_f.exists():
                 # Читаем первую строку и преобразуем в число
