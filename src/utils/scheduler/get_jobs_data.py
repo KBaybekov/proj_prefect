@@ -7,6 +7,7 @@ from pathlib import Path
 from csv import reader as csv_reader
 import yaml
 import time
+from shlex import split as shlex_split
 
 
 # helpers
@@ -18,12 +19,46 @@ def _run_cmd(cmd: List[str], timeout: Optional[int] = 10):
     except subprocess.TimeoutExpired:
         return 124, "", "timeout"
 
-def _first_present(d: dict, keys):
-    for k in keys:
-        if k in d:
-            return d[k]
-    return None
+def _start_background_cmd(cmd: Union[List[str], str]) -> Optional[tuple[int, subprocess.Popen]]:
+    """
+    Запускает команду в фоне и возвращает объект Popen.
+    """
+    if isinstance(cmd, str):
+            try:
+                cmd = shlex_split(
+                                  cmd,
+                                  comments=False,
+                                  posix=True
+                                 )
+            except ValueError as e:
+                print(f"Ошибка разбора команды '{cmd}': {e}")
+                raise
+    try:
+        process = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True
+        )
+        
+        print(f"[PID {process.pid}] Запущена команда: {' '.join(cmd)}")
+        return (process.pid, process)
+    except Exception as e:
+        print(f"Ошибка при запуске команды {cmd}: {e}")
+        return None
 
+
+def collect_completed_process_exitcode(p:subprocess.Popen) -> Optional[int]:
+    """
+    Проверяет все фоновые процессы, извлекает результаты завершённых.
+    Возвращает список результатов: {pid, returncode, stdout, stderr, cmd}.
+    Удаляет завершённые процессы из списка.
+    """
+
+    if p.poll() is None:
+        return None
+    else:
+        return p.returncode
 
 
 def get_user_jobs(user: Optional[str] = None) -> Dict[int, Dict[str, Union[str, int]]]:

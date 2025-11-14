@@ -2,6 +2,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set
+import subprocess
 
 
 @dataclass(slots=True)
@@ -44,9 +45,6 @@ class ProcTask:
     pipeline_version:str = field(default_factory=str)
     # Файлы
     data: TaskData = field(default_factory=TaskData)
-    # Slurm
-    slurm_main_job:Optional[SlurmJob] = field(default=None)
-    slurm_child_jobs:Dict[int, SlurmJob] = field(default_factory=dict)
     # Папки
     result_dir:Path = field(default_factory=Path)
     # Время
@@ -54,7 +52,15 @@ class ProcTask:
     finish:Optional[datetime] = field(default=None)
     last_update:Optional[datetime] = field(default=None)
     time_spent:Optional[datetime] = field(default=None)
-    
+    # Slurm
+    status:str = field(default_factory=str)
+    slurm_main_job:Optional[SlurmJob] = field(default=None)
+    slurm_child_jobs:Dict[int, SlurmJob] = field(default_factory=dict)
+    # Unix
+    pid:int = field(default_factory=int)
+    exit_code:Optional[int] = field(default=None)
+    _subprocess:Optional[subprocess.Popen] = field(default=None)
+
     @staticmethod
     def from_dict(doc: Dict[str, Any]):
         """

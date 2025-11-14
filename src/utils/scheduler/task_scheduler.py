@@ -9,6 +9,7 @@ from .slurm_manager import SlurmManager
 from utils.filesystem.metas import SampleMeta
 from pipeline import Pipeline
 from slurm_task import SlurmTask
+import subprocess
 
 
 logger = get_logger(__name__)
@@ -23,6 +24,8 @@ class TaskScheduler:
     pipelines: Dict[str, Pipeline] = field(default_factory=dict)
     created_tasks: Dict[str, Any] = field(default_factory=dict)
     submitted_tasks: List[str] = field(default_factory=list)
+    # словарь запущенных процессов {task_id: pid}
+    running_processes:Dict[str, int] = field(default_factory=dict)
 
     
     def init_scheduler(
