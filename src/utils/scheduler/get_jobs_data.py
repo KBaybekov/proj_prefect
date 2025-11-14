@@ -167,10 +167,11 @@ print('started')
 if started_proc:
     proc, proc_pid, main_job_id = started_proc
     print(f"Процесс запущен с PID {proc_pid}, job_id {main_job_id}")
-    
+
 while True:
     # Читаем данные из squeue и трейса
     squeue_data = get_user_jobs(user=usr)
+    print(f"received squeue_data, keys:\n{'\n'.join(list(squeue_data.keys()))}")
     # Извлекаем данные о главной задаче
     task_data = squeue_data.get(main_job_id, {})
     # Добавляем данные о дочерних задачах
