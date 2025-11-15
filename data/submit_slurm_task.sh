@@ -55,7 +55,7 @@ export GPUS_4_BASECALLING=${GPUS_4_BASECALLING}
 nextflow run nxf-csp/ont-basecalling/ \
   -resume \
   -name nxf_${J_NAME}_${TIMESTAMP} \
-  -c /storage/work/local/ont-basecalling/conf/low_gpu_mem.config \
+  -c ${NXF_ASSETS}/nxf-csp/ont-basecalling/conf/low_gpu_mem.config \
   --sample ${SAMPLE_ID} \
   --run_id ${J_NAME} \
   --input /raid/kbajbekov/common_share/github/nxf-csp/ont-basecalling/tests/test_samplesheet.csv \
