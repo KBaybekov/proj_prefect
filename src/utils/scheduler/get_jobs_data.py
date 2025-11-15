@@ -176,7 +176,7 @@ def update_task_data(task_data, squeue_data, is_main_proc:bool):
         # Для главного процесса
         if is_main_proc:
             print(f"Процесс {job_id} - головной, читаем p.poll()")
-            collect_completed_process_exitcode(task_data)
+            collect_completed_process_exitcode(task_data['proc'])
         else:
             # Для дочерних процессов
             exit_code_f = Path(task_data.get('work_dir'), '.exitcode').resolve()
