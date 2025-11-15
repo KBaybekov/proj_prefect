@@ -169,7 +169,8 @@ def update_task_data(task_data, squeue_data, is_main_proc:bool):
         task_data['status'] = status
         if status == 'RUNNING':
             for property, slurm_property in {'start':'start_time', 'limit':'end_time'}.items():
-                if not task_data.get(property):
+                if all([not task_data.get(property),
+                        slurm_property in job_data]):
                     task_data[property] = job_data[slurm_property]
     else:
         print(f"Процесс {job_id} больше не в squeue, извлекаем exit_code")
