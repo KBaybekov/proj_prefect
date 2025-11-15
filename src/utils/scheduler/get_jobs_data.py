@@ -87,8 +87,10 @@ def collect_completed_process_exitcode(p:subprocess.Popen) -> Optional[int]:
     Удаляет завершённые процессы из списка.
     """
     if p.poll() is None:
+        print("p.poll() пустой")
         return None
     else:
+        print(f"p.poll() прочитан, получен exit_code {p.returncode}")
         return p.returncode
 
 def define_task_status_by_exit_code(exit_code: int) -> str:
@@ -99,7 +101,7 @@ def define_task_status_by_exit_code(exit_code: int) -> str:
     else:
         return "FAILED"
 
-def get_user_jobs(user: Optional[str] = None) -> Dict[int, Dict[str, Union[str, int]]]:
+def get_user_jobs(user: Optional[str] = None) -> Dict[int, Dict[str, Any]]:
     """
     Возвращает словарь job_id -> summary_dict, полученный из `squeue --json -u user`.
     Не вызывает scontrol (чтобы быть лёгким).
@@ -167,18 +169,24 @@ def update_task_data(task_data, squeue_data, is_main_proc:bool):
         task_data['status'] = status
         if status == 'RUNNING':
             for property, slurm_property in {'start':'start_time', 'limit':'end_time'}.items():
-                task_data[property] = timestamp_to_datetime(job_data.get(slurm_property, {}).get('number', 0))
+                if not task_data.get(property):
+                    task_data[property] = job_data[slurm_property]
     else:
+        print(f"Процесс {job_id} больше не в squeue, извлекаем exit_code")
         # Для главного процесса
         if is_main_proc:
-            task_data['exit_code'] = collect_completed_process_exitcode(proc)
+            print(f"Процесс {job_id} - головной, читаем p.poll()")
+            collect_completed_process_exitcode(task_data)
         else:
             # Для дочерних процессов
             exit_code_f = Path(task_data.get('work_dir'), '.exitcode').resolve()
+            print(f"Процесс f{job_id} - дочерний. Проверяем {exit_code_f}")
             if exit_code_f.exists():
+                print(f"Найден .exitcode в {exit_code_f}:")
             # Читаем первую строку и преобразуем в число
                 with open(exit_code_f, 'r') as f:
                     job_data['exit_code'] = int(f.readline().strip())
+                print(job_data['exit_code'])
             else:
                 print(f"Не найден .exitcode в:\n{job_data['work_dir']}")
     if isinstance(task_data['exit_code'], int):
@@ -226,6 +234,8 @@ if started_proc:
     # Извлекаем данные о главной задаче
     task_data = get_user_jobs(user=usr).get(main_job_id, {})
     task_data['created'] = datetime.datetime.now()
+    task_data['pid'] = proc_pid
+    task_data['proc']  = proc
     task_data['child_jobs'] = {}
     print(task_data)
 
@@ -233,9 +243,8 @@ while True:
     time.sleep(5)
     # Читаем данные из squeue и трейса
     squeue_data = get_user_jobs(user=usr)
-    with open('/mnt/cephfs8_rw/nanopore2/test_space/results/7777/45gd/logs/slurm/slurm_squeue.yaml', 'w') as file:
-        yaml.dump(squeue_data, file)
-    #print(squeue_data)
+    if squeue_data:
+        write_yaml(squeue_data, Path('/mnt/cephfs8_rw/nanopore2/test_space/results/7777/45gd/logs/slurm/slurm_squeue.yaml'))
     print(f"received squeue_data, keys:\n{'\n'.join([str(s) for s in squeue_data.keys()])}")
     # Проверяем, жив ли основной процесс; если нет, собираем exit_code и выходим
     task_data = update_task_data(task_data, squeue_data, True)
