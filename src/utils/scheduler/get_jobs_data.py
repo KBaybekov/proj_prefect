@@ -254,6 +254,8 @@ while True:
         print('пишем выходные данные, выходим')
         write_yaml(task_data, yml)
         exit()
+    else:
+        print(f'не выходим, exit_code: {task_data["exit_code"]}')
     
 
 
