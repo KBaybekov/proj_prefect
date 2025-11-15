@@ -91,6 +91,13 @@ def collect_completed_process_exitcode(p:subprocess.Popen) -> Optional[int]:
     else:
         return p.returncode
 
+def define_task_status_by_exit_code(exit_code: int) -> str:
+    if exit_code == 0:
+        return "COMPLETED"
+    elif exit_code == 124:
+        return "TIMEOUT"
+    else:
+        return "FAILED"
 
 def get_user_jobs(user: Optional[str] = None) -> Dict[int, Dict[str, Union[str, int]]]:
     """
@@ -141,13 +148,15 @@ def get_user_jobs(user: Optional[str] = None) -> Dict[int, Dict[str, Union[str, 
         for property, squeue_property in {'start':'start_time', 'limit':'end_time'}.items():
             time_val = None
             if entry['status'] == 'RUNNING':
-                time_val = timestamp_to_datetime(job.get(squeue_property, {}).get('number', 0))
+                time_val = timestamp_to_datetime(job.get(squeue_property, {}).get('number'))
             entry.update({property: time_val})
         result[jid] = entry
     return result
 
-def timestamp_to_datetime(timestamp: int) -> datetime.datetime:
-    return datetime.datetime.fromtimestamp(timestamp)
+def timestamp_to_datetime(timestamp: Optional[int]) -> Optional[datetime.datetime]:
+    if timestamp:
+        return datetime.datetime.fromtimestamp(timestamp)
+    return None
 
 def update_task_data(task_data, squeue_data, is_main_proc:bool):
     
@@ -172,6 +181,8 @@ def update_task_data(task_data, squeue_data, is_main_proc:bool):
                     job_data['exit_code'] = int(f.readline().strip())
             else:
                 print(f"Не найден .exitcode в:\n{job_data['work_dir']}")
+    if isinstance(task_data['exit_code'], int):
+        task_data['status'] = define_task_status_by_exit_code(task_data['exit_code'])
     return task_data
 
 
