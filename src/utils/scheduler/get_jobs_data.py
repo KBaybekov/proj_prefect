@@ -251,6 +251,7 @@ while True:
     # Добавляем данные о дочерних задачах
     task_data['child_jobs'] = get_child_jobs(squeue_data, main_job_id, task_data['child_jobs'])
     if task_data['exit_code']:
+        print('пишем выходные данные, выходим')
         write_yaml(task_data, yml)
         exit()
     
