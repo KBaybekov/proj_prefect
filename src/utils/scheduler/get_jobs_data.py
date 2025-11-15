@@ -176,7 +176,7 @@ def update_task_data(task_data, squeue_data, is_main_proc:bool):
         # Для главного процесса
         if is_main_proc:
             print(f"Процесс {job_id} - головной, читаем p.poll()")
-            collect_completed_process_exitcode(task_data['proc'])
+            task_data['exit_code'] = collect_completed_process_exitcode(task_data['proc'])
         else:
             # Для дочерних процессов
             exit_code_f = Path(task_data.get('work_dir'), '.exitcode').resolve()
@@ -185,8 +185,8 @@ def update_task_data(task_data, squeue_data, is_main_proc:bool):
                 print(f"Найден .exitcode в {exit_code_f}:")
             # Читаем первую строку и преобразуем в число
                 with open(exit_code_f, 'r') as f:
-                    job_data['exit_code'] = int(f.readline().strip())
-                print(job_data['exit_code'])
+                    task_data['exit_code'] = int(f.readline().strip())
+                print(task_data['exit_code'])
             else:
                 print(f"Не найден .exitcode в:\n{job_data['work_dir']}")
     if isinstance(task_data['exit_code'], int):
@@ -250,12 +250,12 @@ while True:
     task_data = update_task_data(task_data, squeue_data, True)
     # Добавляем данные о дочерних задачах
     task_data['child_jobs'] = get_child_jobs(squeue_data, main_job_id, task_data['child_jobs'])
-    if task_data['exit_code']:
+    if task_data['exit_code'] is None:
+        print(f'не выходим, exit_code: {task_data["exit_code"]}')
+    else:
         print('пишем выходные данные, выходим')
         write_yaml(task_data, yml)
         exit()
-    else:
-        print(f'не выходим, exit_code: {task_data["exit_code"]}')
     
 
 
