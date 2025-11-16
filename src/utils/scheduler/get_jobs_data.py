@@ -144,10 +144,10 @@ def update_task_data(task_data, squeue_data):
             status = job_data.get('status', 'UNKNOWN')
             task_data['status'] = status
             if status == 'RUNNING':
-                for property, slurm_property in {'start':'start_time', 'limit':'end_time'}.items():
+                for property in ['start', 'limit']:
                     if all([task_data.get(property) is None,
-                            slurm_property in job_data]):
-                        task_data[property] = job_data[slurm_property]
+                            property in job_data]):
+                        task_data[property] = job_data[property]
         else:
             print(f"Процесс {job_id} больше не в squeue, извлекаем exit_code")
             task_data['exit_code'] = collect_completed_process_exitcode(Path(task_data.get('work_dir')).resolve())
