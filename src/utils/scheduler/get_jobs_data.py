@@ -169,7 +169,7 @@ def update_task_data(task_data, squeue_data, is_main_proc:bool):
     return task_data
 
 def collect_completed_process_exitcode(process_work_dir:Path) -> Optional[int]:
-    exit_code_f = (process_work_dir / '/.exitcode').resolve()
+    exit_code_f = (process_work_dir / '.exitcode').resolve()
     print(f"Проверяем {exit_code_f}")
     if exit_code_f.exists():
         print(f"Найден .exitcode в {process_work_dir.as_posix()}:")
