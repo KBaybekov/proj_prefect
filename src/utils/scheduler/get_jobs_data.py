@@ -151,24 +151,25 @@ def timestamp_to_datetime(timestamp: Optional[int]) -> Optional[datetime.datetim
 def update_task_data(task_data, squeue_data, is_main_proc:bool):
     
     job_id = task_data['job_id']
-    job_data = squeue_data.get(job_id, {})
-    if job_data:
-        status = job_data.get('status', 'UNKNOWN')
-        task_data['status'] = status
-        if status == 'RUNNING':
-            for property, slurm_property in {'start':'start_time', 'limit':'end_time'}.items():
-                if all([not task_data.get(property),
-                        slurm_property in job_data]):
-                    task_data[property] = job_data[slurm_property]
-    else:
-        print(f"Процесс {job_id} больше не в squeue, извлекаем exit_code")
-        task_data['exit_code'] = collect_completed_process_exitcode(Path(task_data.get('work_dir')).resolve())
-    if isinstance(task_data['exit_code'], int):
-        task_data['status'] = define_task_status_by_exit_code(task_data['exit_code'])
+    if task_data['exit_code'] is None:
+        job_data = squeue_data.get(job_id, {})
+        if job_data:
+            status = job_data.get('status', 'UNKNOWN')
+            task_data['status'] = status
+            if status == 'RUNNING':
+                for property, slurm_property in {'start':'start_time', 'limit':'end_time'}.items():
+                    if all([not task_data.get(property),
+                            slurm_property in job_data]):
+                        task_data[property] = job_data[slurm_property]
+        else:
+            print(f"Процесс {job_id} больше не в squeue, извлекаем exit_code")
+            task_data['exit_code'] = collect_completed_process_exitcode(Path(task_data.get('work_dir')).resolve())
+        if isinstance(task_data['exit_code'], int):
+            task_data['status'] = define_task_status_by_exit_code(task_data['exit_code'])
     return task_data
 
 def collect_completed_process_exitcode(process_work_dir:Path) -> Optional[int]:
-    exit_code_f = (process_work_dir / '.exitcode').resolve()
+    exit_code_f = (process_work_dir / '/.exitcode').resolve()
     print(f"Проверяем {exit_code_f}")
     if exit_code_f.exists():
         print(f"Найден .exitcode в {process_work_dir.as_posix()}:")
