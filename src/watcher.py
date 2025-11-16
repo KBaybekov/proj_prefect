@@ -86,7 +86,15 @@ def main() -> None:
     # Инициируем системы
     fs_watcher, dao, scheduler = stage_init(cfg)
     # Запуск вотчдога для мониторинга событий ФС и постановки задач для обработки
-    run_watchdog(fs_watcher, dao, scheduler)
+    try:
+        run_watchdog(fs_watcher, dao, scheduler)
+    except KeyboardInterrupt:
+        logger.debug("Watchdog stopped by user KeyboardInterrupt")
+        logger.info("Shutting down...")
+    finally:
+        fs_watcher.stop_crawler()
+        scheduler.stop_scheduler()
+        dao.stop_dao()
 
 if __name__ == "__main__":
     main()

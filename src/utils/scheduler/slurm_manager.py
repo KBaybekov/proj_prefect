@@ -9,6 +9,7 @@ from pymongo.collection import Collection
 from utils.logger import get_logger
 from shlex import split as shlex_split
 from slurm_task import SlurmTask
+from json import loads as json_loads
 
 
 logger = get_logger(__name__)
@@ -34,7 +35,7 @@ class SlurmManager:
     
     def _actualize_submitted_tasks_data(
                                         self,
-                                        db_tasks:List[str]
+                                        db_tasks:Dict[str, int]
                                        ) -> Dict[str, Any]:
         """
         Актуализирует данные о статусах задач в Slurm.
@@ -48,26 +49,86 @@ class SlurmManager:
                     task_id: SlurmTask.from_dict(task_data)
                     for task_id, task_data in tasks.items()
                    }
-
-        slurm_data = self._get_queued_tasks_data()
+        
+        squeue_data = self._get_queued_tasks_data()
+        # обновляем информацию о запущенных задачах
+        if squeue_data:
+            for job_id in db_tasks.values():
+                
         # 
 
 
     def _get_queued_tasks_data(
                                self
-                              ) -> Dict[str, Dict[str, Any]]:
+                              ) -> Dict[int, Dict[str, Any]]:
         """
-        Получает информацию о заданиях, находящихся в очереди Slurm.
-        Возвращает словарь с информацией о заданиях.
+        Возвращает словарь job_id -> summary_dict, полученный из `squeue --json -u user`.
+        Не вызывает scontrol (чтобы быть лёгким).
         """
-        data = literal_eval(self.run_subprocess(
-                                   cmd=[
-                                        "squeue",
-                                        "--user", self.user,
-                                        "--json"
-                                   ]
-                                  ).stdout)
-        return data
+        def __timestamp_to_datetime(timestamp: Optional[int]) -> Optional[datetime]:
+            """
+            Преобразование timestamp (число секунд) в datetime.
+            """
+            if timestamp:
+                return datetime.fromtimestamp(timestamp)
+            return None
+
+
+        # Получаем данные о задачах, созданных пользователем, в виде json-строки
+        cmd_result = self._run_subprocess([
+                                           "squeue",
+                                           "--json",
+                                           "-u",
+                                           self.user],
+                                          timeout=15,
+                                          critical=True
+                                         )
+        rc, out = cmd_result.returncode, cmd_result.stdout
+        if rc != 0:
+            logger.error(f"Ошибка при запросе данных о задачах Slurm: exit_code {rc}")
+            return {}
+        # Преобразуем json-строку в словарь
+        try:
+            j = json_loads(out)
+        except Exception as e:
+            logger.error("Ошибка при преобразовании stdout squeue в json:", e)
+            return {}
+        # Проверяем наличие ключа "jobs", и если он есть, извлекаем его в виде списка
+        jobs:List[Dict[Union[int, str], Any]] = j.get("jobs") or []
+        result = {}
+        # Проходим по всем задачам, извлекая нужные поля
+        for job in jobs:
+            job_id = job.get('job_id') 
+            if not job_id:
+                continue
+            entry = {
+                "job_id": job_id,
+                "name": job.get('name', ''),
+                "array_job_id": job.get('array_job_id', {}).get('number'),
+                "parent_job_id": 0 
+                                  if not job.get('comment', '')
+                                  else int(job.get('comment', '').removeprefix("parent_job_id ")),
+                "nodes": job.get('nodes'),
+                "partition": job.get('partition'),
+                "priority": job.get('priority', {}).get('number'),
+                "status": job.get('job_state', [])[-1],
+                "stderr": '' 
+                            if job.get('standard_error', '') == '/dev/null'
+                            else job.get('standard_error', ''),
+                "stdout": '' 
+                            if job.get('standard_output', '') == '/dev/null'
+                            else job.get('standard_output', ''),
+                "exit_code": job.get('exit_code', {}).get('number'),
+                "work_dir": job.get('current_working_directory')
+            }
+            # Для задач, которые ещё начали выполняться, извлекаем время старта и лимит
+            for property, squeue_property in {'start':'start_time', 'limit':'end_time'}.items():
+                time_val = None
+                if entry['status'] == 'RUNNING':
+                    time_val = __timestamp_to_datetime(job.get(squeue_property, {}).get('number'))
+                entry.update({property: time_val})
+            result[job_id] = entry
+        return result
     
     def _update_task_data(
                           self,
@@ -184,10 +245,11 @@ class SlurmManager:
             logger.warning(f"Задание {task_doc['job_id']} не найдена и файлы отсутствуют.")
             self.update_task_status(task_doc["job_id"], "FAILED", "MissingOutputFiles")
 
-    def run_subprocess(
+    def _run_subprocess(
                        self,
                        cmd: Union[str, List[str]],
                        check: bool = False,
+                       critical: bool = False,
                        timeout: Optional[float] = None,
                        capture_output: bool = False,
                        env: Optional[Dict[str, str]] = None,
@@ -200,7 +262,7 @@ class SlurmManager:
                        shell: bool = False,
                        log_output: bool = True,
                        suppress_output: bool = False,
-                      ) -> subprocess.CompletedProcess:
+                      ) -> op[subprocess.CompletedProcess]:
         """
         Обёртка над subprocess.run с расширенной логикой и безопасностью.
 
@@ -272,10 +334,12 @@ class SlurmManager:
         except subprocess.TimeoutExpired as e:
             logger.error(f"Таймаут команды: {' '.join(e.cmd)}")
             logger.error(f"Время ожидания: {timeout}s")
-            raise
+            if critical:
+                raise
         except Exception as e:
             logger.error(f"Неожиданная ошибка: {e}")
-            raise
+            if critical:
+                raise
 
         # Логирование результата
         if log_output and capture_output:

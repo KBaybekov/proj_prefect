@@ -5,7 +5,7 @@ from typing import Any, Dict, List, Optional, Set
 import subprocess
 
 
-@dataclass(slots=True)
+@dataclass
 class SlurmJob:
     # Идентификаторы
     job_id:int = field(default_factory=int)
@@ -24,6 +24,10 @@ class SlurmJob:
     start:Optional[datetime] = field(default=None)
     finish:Optional[datetime] = field(default=None)
     limit:Optional[datetime] = field(default=None)
+
+    def __add_child_job(self, job_data:Dict[str, Any]) -> None:
+        if not
+
 
 @dataclass(slots=True)
 class TaskData:

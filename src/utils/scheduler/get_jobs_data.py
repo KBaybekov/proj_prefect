@@ -41,44 +41,32 @@ def _start_background_cmd(cmd: Union[List[str], str]) -> Optional[tuple[subproce
             stderr=subprocess.PIPE,
             text=True
         )
-        job_id = monitor_sbatch_output(process)
+        job_id = 'monitor_sbatch_output(process)'
         print(f"[PID {process.pid}] Запущена команда: {' '.join(cmd)}")
         return (process, process.pid, job_id)
     except Exception as e:
         print(f"Ошибка при запуске команды {cmd}: {e}")
         return None
 
-def monitor_sbatch_output(proc: subprocess.Popen) -> int:
+def extract_slurm_job_id(stdout: str) -> int:
     """
-    Читает stdout процесса построчно в реальном времени.
+    Извлекает Slurm ID задачи из stdout
     """
     job_id = 0
-    if proc.stdout:
-        try:
-            for line in proc.stdout:  # proc.stdout — итератор по строкам
-                line = line.strip()
-                if not line:
+    try:
+        for line in stdout.splitlines():
+            line = line.strip()
+            if not line:
                     continue
-                extracted_job_id = extract_slurm_job_id(line)
-                if extracted_job_id:
-                    job_id = extracted_job_id
-                    break
-        except Exception as e:
+            if line.startswith("Submitted batch job"):
+                parts = line.split()
+                if len(parts) == 4 and parts[3].isdigit():
+                    job_id = int(parts[3])
+                    return job_id
+    except Exception as e:
             print(f"Ошибка при чтении stdout: {e}")
-        finally:
-            proc.stdout.close()
-            return job_id  # ID найден — можно прекратить мониторинг
-
-def extract_slurm_job_id(line: str) -> Optional[int]:
-    """
-    Извлекает ID задачи из строки вида:
-        'Submitted batch job 35904'
-    """
-    if line.startswith("Submitted batch job"):
-        parts = line.split()
-        if len(parts) == 4 and parts[3].isdigit():
-            return int(parts[3])
-    return None
+    finally:
+        return job_id
 
 def collect_completed_process_exitcode(p:subprocess.Popen) -> Optional[int]:
     """
@@ -174,25 +162,25 @@ def update_task_data(task_data, squeue_data, is_main_proc:bool):
                     task_data[property] = job_data[slurm_property]
     else:
         print(f"Процесс {job_id} больше не в squeue, извлекаем exit_code")
-        # Для главного процесса
-        if is_main_proc:
-            print(f"Процесс {job_id} - головной, читаем p.poll()")
-            task_data['exit_code'] = collect_completed_process_exitcode(task_data['proc'])
-        else:
-            # Для дочерних процессов
-            exit_code_f = Path(task_data.get('work_dir'), '.exitcode').resolve()
-            print(f"Процесс f{job_id} - дочерний. Проверяем {exit_code_f}")
-            if exit_code_f.exists():
-                print(f"Найден .exitcode в {exit_code_f}:")
-            # Читаем первую строку и преобразуем в число
-                with open(exit_code_f, 'r') as f:
-                    task_data['exit_code'] = int(f.readline().strip())
-                print(task_data['exit_code'])
-            else:
-                print(f"Не найден .exitcode в:\n{job_data['work_dir']}")
+        task_data['exit_code'] = collect_completed_process_exitcode(Path(task_data.get('work_dir')).resolve())
     if isinstance(task_data['exit_code'], int):
         task_data['status'] = define_task_status_by_exit_code(task_data['exit_code'])
     return task_data
+
+def collect_completed_process_exitcode(process_work_dir:Path) -> Optional[int]:
+    exit_code_f = (process_work_dir / '.exitcode').resolve()
+    print(f"Проверяем {exit_code_f}")
+    if exit_code_f.exists():
+        print(f"Найден .exitcode в {process_work_dir.as_posix()}:")
+        try:
+            # Читаем первую строку и преобразуем в число
+            with open(exit_code_f, 'r') as f:
+                return int(f.readline().strip())
+        except Exception as e:
+            print(f"Ошибка при чтении {exit_code_f.as_posix()}: {e}")
+    else:
+        print(f"Не найден .exitcode в {process_work_dir.as_posix()}")
+    return None
 
 
 def get_child_jobs(squeue_data:Dict[int, Dict[str, Union[str, int]]],
@@ -223,20 +211,19 @@ yml = Path('/mnt/cephfs8_rw/nanopore2/test_space/results/7777/45gd/logs/slurm/sl
 
 # Запускаем процесс
 print('starting...')
-started_proc = _start_background_cmd(cmd=[
-                                       'bash',
-                                       '/raid/kbajbekov/common_share/github/proj_prefect/data/submit_slurm_task.sh'
-                                       ])
+main_proc = _run_cmd(cmd=[
+                        'bash',
+                        '/raid/kbajbekov/common_share/github/proj_prefect/data/submit_slurm_task.sh'
+                        ])
 print('started')
 
-if started_proc:
-    proc, proc_pid, main_job_id = started_proc
-    print(f"Процесс запущен с PID {proc_pid}, job_id {main_job_id}")
+main_proc_rc, main_proc_stdout, main_proc_stderr = main_proc
+if main_proc_rc == 0:
+    main_job_id = extract_slurm_job_id(main_proc_stdout)
+    print(f"Процесс запущен с job_id {main_job_id}")
     # Извлекаем данные о главной задаче
     task_data = get_user_jobs(user=usr).get(main_job_id, {})
     task_data['created'] = datetime.datetime.now()
-    task_data['pid'] = proc_pid
-    task_data['proc']  = proc
     task_data['child_jobs'] = {}
     print(task_data)
 

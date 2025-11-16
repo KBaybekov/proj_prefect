@@ -19,6 +19,7 @@ JOB_WORK_DIR="${MAIN_WORK_DIR}/${SAMPLE_NAME}/${SAMPLE_FINGERPRINT}/${PIPELINE_N
 LOG_DIR="${JOB_RESULT_DIR}/logs"
 SLURM_OUT="${LOG_DIR}/slurm/job_${J_NAME}.out"
 SLURM_ERR="${LOG_DIR}/slurm/job_${J_NAME}.err"
+SLURM_EXIT_CODE="${JOB_WORK_DIR}.exitcode"
 
 mkdir -p "${JOB_WORK_DIR}" "${LOG_DIR}/slurm"
 
@@ -38,7 +39,6 @@ cat > "${SBATCH_PATH}" <<EOF
 #SBATCH --partition=cpu_nodes
 #SBATCH --output=${SLURM_OUT}
 #SBATCH --error=${SLURM_ERR}
-#SBATCH --wait
 
 # Nextflow variables
 export NXF_EXECUTOR=slurm
@@ -59,7 +59,9 @@ nextflow run nxf-csp/ont-basecalling/ \
   --sample ${SAMPLE_ID} \
   --run_id ${J_NAME} \
   --input /raid/kbajbekov/common_share/github/nxf-csp/ont-basecalling/tests/test_samplesheet.csv \
-  --outdir ${JOB_RESULT_DIR} \
+  --outdir ${JOB_RESULT_DIR}
+
+  echo $? > ${SLURM_EXIT_CODE}
 
 EOF
 

@@ -23,7 +23,7 @@ class TaskScheduler:
     slurm_manager:Optional[SlurmManager] = field(default=None)
     pipelines: Dict[str, Pipeline] = field(default_factory=dict)
     created_tasks: Dict[str, Any] = field(default_factory=dict)
-    submitted_tasks: List[str] = field(default_factory=list)
+    submitted_tasks: Dict[str, int] = field(default_factory=dict)
     # словарь запущенных процессов {task_id: pid}
     running_processes:Dict[str, int] = field(default_factory=dict)
 
@@ -110,17 +110,26 @@ class TaskScheduler:
 
     def _get_submitted_tasks_from_db(
                                      self
-                                    ) -> List[str]:
+                                    ) -> Dict[str, int]:
+        """
+        Выгружает из БД список задач, запущенных ранее в обработку
+        """
         dao_request = self.dao.find(
                                     collection="tasks",
-                                    query={'status': {"ne":"finished"}},
-                                    projection={'task_id':1}
+                                    query={'status': {"$ne":"finished"}},
+                                    projection={
+                                                'task_id':1,
+                                                'job_id':1                                               
+                                               }
                                    )
         if dao_request:
             logger.debug(f"Выгружено запущенных задач из БД: {len(dao_request)}")
         else:
             logger.debug("Выгружено запущенных задач из БД: 0")
-        return [task_id for _, task_id in dao_request]
+        return {
+                task_data['task_id']:task_data['job_id']
+                for task_data in dao_request
+               }
 
     def _create_task_id(
                         self,
