@@ -61,7 +61,7 @@ nextflow run nxf-csp/ont-basecalling/ \
   --input /raid/kbajbekov/common_share/github/nxf-csp/ont-basecalling/tests/test_samplesheet.csv \
   --outdir ${JOB_RESULT_DIR}
 
-eval 'echo $? > ${SLURM_EXIT_CODE}'
+echo \\$? > ${SLURM_EXIT_CODE}
 
 EOF
 

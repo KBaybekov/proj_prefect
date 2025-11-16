@@ -68,19 +68,6 @@ def extract_slurm_job_id(stdout: str) -> int:
     finally:
         return job_id
 
-def collect_completed_process_exitcode(p:subprocess.Popen) -> Optional[int]:
-    """
-    Проверяет все фоновые процессы, извлекает результаты завершённых.
-    Возвращает список результатов: {pid, returncode, stdout, stderr, cmd}.
-    Удаляет завершённые процессы из списка.
-    """
-    if p.poll() is None:
-        print("p.poll() пустой")
-        return None
-    else:
-        print(f"p.poll() прочитан, получен exit_code {p.returncode}")
-        return p.returncode
-
 def define_task_status_by_exit_code(exit_code: int) -> str:
     if exit_code == 0:
         return "COMPLETED"
@@ -148,7 +135,7 @@ def timestamp_to_datetime(timestamp: Optional[int]) -> Optional[datetime.datetim
         return datetime.datetime.fromtimestamp(timestamp)
     return None
 
-def update_task_data(task_data, squeue_data, is_main_proc:bool):
+def update_task_data(task_data, squeue_data):
     
     job_id = task_data['job_id']
     if task_data['exit_code'] is None:
@@ -158,7 +145,7 @@ def update_task_data(task_data, squeue_data, is_main_proc:bool):
             task_data['status'] = status
             if status == 'RUNNING':
                 for property, slurm_property in {'start':'start_time', 'limit':'end_time'}.items():
-                    if all([not task_data.get(property),
+                    if all([task_data.get(property) is None,
                             slurm_property in job_data]):
                         task_data[property] = job_data[slurm_property]
         else:
@@ -197,7 +184,7 @@ def get_child_jobs(squeue_data:Dict[int, Dict[str, Union[str, int]]],
                 child_jobs[job_id] = job_data
     # Обновляем данные по уже найденным
     for job_id, job_data in child_jobs.items():
-        update_task_data(job_data,squeue_data, False)
+        update_task_data(job_data,squeue_data)
     return child_jobs
 
 def write_yaml(data:Dict, path:Path):
@@ -236,7 +223,7 @@ while True:
         write_yaml(squeue_data, Path('/mnt/cephfs8_rw/nanopore2/test_space/results/7777/45gd/logs/slurm/slurm_squeue.yaml'))
     print(f"received squeue_data, keys:\n{'\n'.join([str(s) for s in squeue_data.keys()])}")
     # Проверяем, жив ли основной процесс; если нет, собираем exit_code и выходим
-    task_data = update_task_data(task_data, squeue_data, True)
+    task_data = update_task_data(task_data, squeue_data)
     # Добавляем данные о дочерних задачах
     task_data['child_jobs'] = get_child_jobs(squeue_data, main_job_id, task_data['child_jobs'])
     if task_data['exit_code'] is None:
