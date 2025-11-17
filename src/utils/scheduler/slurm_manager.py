@@ -8,7 +8,7 @@ from pathlib import Path
 from pymongo.collection import Collection
 from utils.logger import get_logger
 from shlex import split as shlex_split
-from slurm_task import SlurmTask
+from utils.scheduler.processing_task import SlurmTask
 from json import loads as json_loads
 
 
@@ -19,50 +19,38 @@ class SlurmManager:
     user:str
     poll_interval:int
     queue_size:int
-    submitted_tasks_slurm:Dict[str, SlurmTask] = field(default_factory=dict)
-    submitted_tasks_db:Dict[str, SlurmTask] = field(default_factory=dict)
+    # словарь {job_id:job_squeue_data}
+    squeue_data:Dict[
+                     int,
+                     Dict[
+                          str,
+                          Union[
+                                datetime,
+                                dict,
+                                int,
+                                None,
+                                Path,
+                                str
+                    ]]] = field(default_factory=dict)
+
 
     def __post_init__(self) -> None:
         self._check_slurm_presence()
         return
 
     def _check_slurm_presence(self) -> None:
-        if self.run_subprocess(["which", "sbatch"]).returncode == 0:
+        if self._run_subprocess(["which", "sbatch"]).returncode == 0:
             logger.debug("Slurm доступен.")
         else:
             logger.error("Slurm не доступен.")
             raise Exception("Slurm не доступен.")
     
-    def _actualize_submitted_tasks_data(
-                                        self,
-                                        db_tasks:Dict[str, int]
-                                       ) -> Dict[str, Any]:
-        """
-        Актуализирует данные о статусах задач в Slurm.
-        Возвращает словарь с данными по задачам.
-        """
-        def __convert_to_slurm_task(
-                                    tasks:Dict[str, Dict[str, Any]]
-                                   ) -> Dict[str, SlurmTask]:
-            
-            return {
-                    task_id: SlurmTask.from_dict(task_data)
-                    for task_id, task_data in tasks.items()
-                   }
-        
-        squeue_data = self._get_queued_tasks_data()
-        # обновляем информацию о запущенных задачах
-        if squeue_data:
-            for job_id in db_tasks.values():
-                
-        # 
-
-
     def _get_queued_tasks_data(
                                self
-                              ) -> Dict[int, Dict[str, Any]]:
+                              ) -> None:
         """
         Возвращает словарь job_id -> summary_dict, полученный из `squeue --json -u user`.
+        Также добавляет вложенный словарь дочерних задач к основным задачам.
         Не вызывает scontrol (чтобы быть лёгким).
         """
         def __timestamp_to_datetime(timestamp: Optional[int]) -> Optional[datetime]:
@@ -72,7 +60,6 @@ class SlurmManager:
             if timestamp:
                 return datetime.fromtimestamp(timestamp)
             return None
-
 
         # Получаем данные о задачах, созданных пользователем, в виде json-строки
         cmd_result = self._run_subprocess([
@@ -86,94 +73,62 @@ class SlurmManager:
         rc, out = cmd_result.returncode, cmd_result.stdout
         if rc != 0:
             logger.error(f"Ошибка при запросе данных о задачах Slurm: exit_code {rc}")
-            return {}
+            return None
         # Преобразуем json-строку в словарь
         try:
             j = json_loads(out)
         except Exception as e:
             logger.error("Ошибка при преобразовании stdout squeue в json:", e)
-            return {}
+            return None
         # Проверяем наличие ключа "jobs", и если он есть, извлекаем его в виде списка
         jobs:List[Dict[Union[int, str], Any]] = j.get("jobs") or []
-        result = {}
         # Проходим по всем задачам, извлекая нужные поля
         for job in jobs:
             job_id = job.get('job_id') 
             if not job_id:
                 continue
             entry = {
-                "job_id": job_id,
-                "name": job.get('name', ''),
-                "array_job_id": job.get('array_job_id', {}).get('number'),
-                "parent_job_id": 0 
-                                  if not job.get('comment', '')
-                                  else int(job.get('comment', '').removeprefix("parent_job_id ")),
-                "nodes": job.get('nodes'),
-                "partition": job.get('partition'),
-                "priority": job.get('priority', {}).get('number'),
-                "status": job.get('job_state', [])[-1],
-                "stderr": '' 
-                            if job.get('standard_error', '') == '/dev/null'
-                            else job.get('standard_error', ''),
-                "stdout": '' 
-                            if job.get('standard_output', '') == '/dev/null'
-                            else job.get('standard_output', ''),
-                "exit_code": job.get('exit_code', {}).get('number'),
-                "work_dir": job.get('current_working_directory')
-            }
+                     "job_id": job_id,
+                     "name": job.get('name', ''),
+                     "array_job_id": job.get('array_job_id', {}).get('number', 0),
+                     "parent_job_id": 0
+                                       if not job.get('comment', '')
+                                       else int(job.get('comment', '').removeprefix("parent_job_id ")),
+                     "nodes": job.get('nodes', "").split(','),
+                     "partition": job.get('partition'),
+                     "priority": job.get('priority', {}).get('number', 0),
+                     "status": job.get('job_state', [])[-1],
+                     "stderr": '' 
+                                 if job.get('standard_error', '') == '/dev/null'
+                                 else Path(job.get('standard_error', '')),
+                     "stdout": '' 
+                                 if job.get('standard_output', '') == '/dev/null'
+                                 else Path(job.get('standard_output', '')),
+                     "exit_code": job.get('exit_code', {}).get('number'),
+                     "work_dir": Path(job.get('current_working_directory', ''))
+                    }
             # Для задач, которые ещё начали выполняться, извлекаем время старта и лимит
-            for property, squeue_property in {'start':'start_time', 'limit':'end_time'}.items():
+            for property, squeue_property in {
+                                              'start':'start_time',
+                                              'limit':'end_time'
+                                             }.items():
                 time_val = None
                 if entry['status'] == 'RUNNING':
                     time_val = __timestamp_to_datetime(job.get(squeue_property, {}).get('number'))
                 entry.update({property: time_val})
-            result[job_id] = entry
-        return result
+             
+            self.squeue_data[job_id] = entry
+        
+        # Добавляем дочерние задачи
+        for job_id, entry in self.squeue_data.items():
+            parent_job_entry = self.squeue_data.get(entry['parent_job_id']) # type: ignore
+            if parent_job_entry:
+                if 'child_jobs' not in parent_job_entry:
+                    parent_job_entry['child_jobs'] = {}
+                parent_job_entry['child_jobs'].update({job_id:entry}) # type: ignore
+
+        return None
     
-    def _update_task_data(
-                          self,
-                          task_id:str,
-                         ) -> None:
-        """
-        Запрашивает в БД статус задачи. Предполагается, что в БД есть запись о задаче.
-        Если статус не указывает на завершение ('CANCELLED', 'COMPLETED', 'FAILED'),
-        обновляет статус путём запроса в Slurm по job_id. Если в Slurm нет указанного job_id,
-        проверяет наличие выходных файлов.
-        
-        """
-        def __is_task_completed(status:str) -> bool:
-            if status in ['ok', 'failed']:
-                return True
-            else:
-                return False
-            
-        task_completed = False
-        task_record:SlurmTask = self.submitted_tasks.get(
-                                                         task_id,
-                                                         SlurmTask.from_db(self.dao.find_one(
-                                                                                             collection="tasks",
-                                                                                             query={"task_id": task_id},
-                                                                                             projection={}
-                                                                                            ))) # type: ignore
-        # В случае, если статусы задачи в Slurm указывают на её завершение, направляем на процедуру завершения обработки задания
-        task_completed = __is_task_completed(task_record.slurm_status)
-        # В противном случае запрашиваем статус задачи в Slurm
-        if task_completed:
-            self._task_completion_check(task_record)
-        else:
-            task_record.slurm_status = self.slurm_manager._get_job_info(task_record.slurm_job_id)
-            task_completed = __is_task_completed(task_record.slurm_status)
-            if task_completed
-
-            #!!! крч, тут у нас процедура обновления данных и завершения обработки, если задача всё.
-            # У меня сейчас не хватает понимания, что там должно куда идти и откуда, так что я пока бросил всё это (30.10.25,20:30)
-        
-
-
-
-            
-            #self._extract_task_results_to_sample(db_task_record)
-
 
     def submit_to_slurm(self, job_script: str, job_name: str, resources: Dict[str, Any]) -> str:
         """Отправляет задание в Slurm и возвращает ID задачи."""

@@ -68,6 +68,7 @@ def extract_slurm_job_id(stdout: str) -> int:
     finally:
         return job_id
 
+# перенесено в TaskSlurmJob (_define_task_status_by_exit_code)
 def define_task_status_by_exit_code(exit_code: int) -> str:
     if exit_code == 0:
         return "COMPLETED"
@@ -76,6 +77,7 @@ def define_task_status_by_exit_code(exit_code: int) -> str:
     else:
         return "FAILED"
 
+# перенесено в SlurmManager (_get_queued_tasks_data)
 def get_user_jobs(user: Optional[str] = None) -> Dict[int, Dict[str, Any]]:
     """
     Возвращает словарь job_id -> summary_dict, полученный из `squeue --json -u user`.
@@ -99,28 +101,28 @@ def get_user_jobs(user: Optional[str] = None) -> Dict[int, Dict[str, Any]]:
     result = {}
     for job in jobs:
         # tolerant field extraction (squeue json keys can vary by version)
-        jid = job.get('job_id') 
+        jid = job.get('job_id', 0) 
         if not jid:
             continue
         entry = {
             "job_id": jid,
-            "name": job.get('name'),
-            "array_job_id": job.get('array_job_id', {}).get('number'),
+            "name": job.get('name', ''),
+            "array_job_id": job.get('array_job_id', {}).get('number', 0),
             "parent_job_id": 0
                                 if not job.get('comment', '')
                                 else int(job.get('comment', '').removeprefix("parent_job_id ")),
-            "nodes": job.get('nodes'),
+            "nodes": job.get('nodes', ""),
             "partition": job.get('partition'),
-            "priority": job.get('priority', {}).get('number'),
+            "priority": job.get('priority', {}).get('number', 0),
             "status": job.get('job_state', [])[-1],
             "stderr": '' 
                         if job.get('standard_error', '') == '/dev/null'
-                        else job.get('standard_error', ''),
+                        else Path(job.get('standard_error', '')),
             "stdout": '' 
                         if job.get('standard_output', '') == '/dev/null'
-                        else job.get('standard_output', ''),
+                        else Path(job.get('standard_output', '')),
             "exit_code": job.get('exit_code', {}).get('number'),
-            "work_dir": job.get('current_working_directory')
+            "work_dir": Path(job.get('current_working_directory', ''))
         }
         for property, squeue_property in {'start':'start_time', 'limit':'end_time'}.items():
             time_val = None
@@ -135,9 +137,11 @@ def timestamp_to_datetime(timestamp: Optional[int]) -> Optional[datetime.datetim
         return datetime.datetime.fromtimestamp(timestamp)
     return None
 
+# перенесено в TaskSlurmJob (_update)
 def update_task_data(task_data, squeue_data):
     
     job_id = task_data['job_id']
+    task_data['exit_code'] = collect_completed_process_exitcode(Path(task_data.get('work_dir')).resolve())
     if task_data['exit_code'] is None:
         job_data = squeue_data.get(job_id, {})
         if job_data:
@@ -150,11 +154,12 @@ def update_task_data(task_data, squeue_data):
                         task_data[property] = job_data[property]
         else:
             print(f"Процесс {job_id} больше не в squeue, извлекаем exit_code")
-            task_data['exit_code'] = collect_completed_process_exitcode(Path(task_data.get('work_dir')).resolve())
-        if isinstance(task_data['exit_code'], int):
-            task_data['status'] = define_task_status_by_exit_code(task_data['exit_code'])
+
+    elif isinstance(task_data['exit_code'], int):
+        task_data['status'] = define_task_status_by_exit_code(task_data['exit_code'])
     return task_data
 
+# перенесено в TaskSlurmJob (_collect_completed_process_data)
 def collect_completed_process_exitcode(process_work_dir:Path) -> Optional[int]:
     exit_code_f = (process_work_dir / '.exitcode').resolve()
     print(f"Проверяем {exit_code_f}")
@@ -170,7 +175,7 @@ def collect_completed_process_exitcode(process_work_dir:Path) -> Optional[int]:
         print(f"Не найден .exitcode в {process_work_dir.as_posix()}")
     return None
 
-
+# перенесено в ProcessingTask (_update)
 def get_child_jobs(squeue_data:Dict[int, Dict[str, Union[str, int]]],
                    main_job_id:int,
                    child_jobs:Dict[int, Dict[str, Union[str, int]]]) -> Dict[int, Dict[str, Union[str, int]]]:

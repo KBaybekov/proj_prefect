@@ -88,10 +88,11 @@ filesystem:
 
 # TASK SCHEDULER INFO
 scheduler:
+  db_poll_interval: 10
   result_dir: "/common_share/github/proj_prefect/test/data/result/"
   processing_dir: "/common_share/github/proj_prefect/test/data/tmp/"
   slurm_user: "kbajbekov"
-  slurm_poll_interval: 60
+  slurm_poll_interval: 5
   slurm_queue_size: 32
   slurm_template: "/path-to-slurm_template"
 

@@ -5,10 +5,10 @@ from datetime import datetime, timezone
 from utils.db.db import ConfigurableMongoDAO
 from utils.logger import get_logger
 from pathlib import Path
-from .slurm_manager import SlurmManager
+from utils.scheduler.slurm_manager import SlurmManager
 from utils.filesystem.metas import SampleMeta
-from pipeline import Pipeline
-from slurm_task import SlurmTask
+from utils.scheduler.pipeline import Pipeline
+from utils.scheduler.processing_task import ProcessingTask
 import subprocess
 
 
@@ -22,11 +22,11 @@ class TaskScheduler:
     poll_interval:int = field(default=30)
     slurm_manager:Optional[SlurmManager] = field(default=None)
     pipelines: Dict[str, Pipeline] = field(default_factory=dict)
-    created_tasks: Dict[str, Any] = field(default_factory=dict)
-    submitted_tasks: Dict[str, int] = field(default_factory=dict)
-    # словарь запущенных процессов {task_id: pid}
-    running_processes:Dict[str, int] = field(default_factory=dict)
-
+    created_tasks: Dict[str, ProcessingTask] = field(default_factory=dict)
+    # словарь запущенных задач {task_id: ProcessingTask}
+    queued_tasks: Dict[str, ProcessingTask] = field(default_factory=dict)
+    # словарь данных для идёмпотентной загрузки в БД вида {collection: {doc_id: doc_data}
+    data_to_db:Dict[str, Dict[str, Any]] = field(default_factory=dict)
     
     def init_scheduler(
                        self
@@ -42,31 +42,49 @@ class TaskScheduler:
             logger.debug(f"Пайплайн {pipeline_name} для образца {sample} ранее запущен не был.")
             return {}
         
-        logger.debug("Инициализация менеджера Slurm...")
+        # Загрузка конфигурации пайплайнов
+        self._load_pipelines()
         # Загрузка менеджера Slurm
+        self._create_slurm_manager()
+        # Актуализация информации о запущенных заданиях
+        self._actualize_queued_tasks_data()
+        # Формирование заданий на обработку
+        self._create_new_tasks()
+        # Постановка заданий в очередь Slurm
+        self._put_tasks_in_queue()
+
+
+        return
+        
+    def _load_pipelines(
+                        self
+                       ) -> None:
+        """
+        Загрузка конфигурации пайплайнов из общей конфигурации.
+        """
+        self.pipelines = {
+                          pipeline:Pipeline(pipeline_data)
+                          for pipeline, pipeline_data in self._cfg['pipelines'].items()
+                         }
+        
+        logger.info(f"Загружено {len(self.pipelines)} пайплайнов:\n{'\n\t'.join(self.pipelines.keys())}.")
+        return None
+
+    def _create_slurm_manager(
+                              self
+                             ) -> None:
+        """
+        Инициализация менеджера Slurm.
+        """
+        logger.debug("Инициализация менеджера Slurm...")
         self.slurm_manager = SlurmManager(
                                           user=self._cfg['slurm_user'],
                                           poll_interval=int(self._cfg['slurm_poll_interval']),
                                           queue_size=int(self._cfg['slurm_queue_size'])
                                          )
         logger.info("Менеджер Slurm инициализирован.")
-        
-        # Загрузка конфигурации пайплайнов
-        self.pipelines: Dict[str, Pipeline] = {
-                                               pipeline:Pipeline(pipeline_data)
-                                               for pipeline, pipeline_data in self._cfg['pipelines'].items()
-                                              }
-        logger.info(f"Загружено {len(self.pipelines)} пайплайнов:\n{'\n\t'.join(self.pipelines.keys())}.")
-        # Выгрузка из БД запущенных задач
-        self.submitted_tasks = self._get_submitted_tasks_from_db()
-        # Актуализация информации о запущенных заданиях
-        self.slurm_manager._actualize_submitted_tasks_data(self.submitted_tasks)
-        # Формирование заданий на обработку
-        self._create_new_tasks()
+        return None
 
-
-        return
-        
     def _create_new_tasks(
                           self
                          ) -> None:
@@ -108,28 +126,76 @@ class TaskScheduler:
                                           pipeline    
                                          )
 
-    def _get_submitted_tasks_from_db(
+    def _actualize_queued_tasks_data(
                                      self
-                                    ) -> Dict[str, int]:
+                                    ) -> None:
         """
-        Выгружает из БД список задач, запущенных ранее в обработку
+        Выгружает из БД список задач, запущенных ранее в обработку.
+        Собирает данные о запущенных заданиях из Slurm.
+        Актуализирует данные заданий.
+        Загружает обновленные данные в БД.
+        """
+        unqueued_tasks:List[str] = []
+        logger.debug("Актуализация данных о запущенных заданиях...")
+        # Выгрузка из БД запущенных задач
+        self._get_queued_tasks_from_db()
+        # Обновление данных о запущенных заданиях с помощью Slurm
+        if self.slurm_manager:
+            self.slurm_manager._get_queued_tasks_data()
+            for task_id, task in self.queued_tasks.items():
+                if task.slurm_main_job:
+                    slurm_data = self.slurm_manager.squeue_data.get(
+                                        task.slurm_main_job.job_id,
+                                        {})
+                    # Если данные о задании получены, обновляем его
+                    if slurm_data:
+                        logger.debug(f"Обновление данных задания {task_id} из Slurm.")
+                        task._update(slurm_data)
+                    # Если нет, то выполняем процедуру завершения задания 
+                    # и удаляем его из списка поставленных в очередь
+                    else:
+                        logger.debug(f"Данные задания {task_id} не получены из Slurm.")
+                        logger.debug(f"Задание {task_id} помечено как завершённое.")
+                        task._complete()
+                        unqueued_tasks.append(task_id)
+                self._add_task_to_db_uploading(task)
+
+        # Удаление завершённых заданий из списка поставленных в очередь
+        !!!
+        return None
+
+    def _get_queued_tasks_from_db(
+                                  self
+                                 ) -> None:
+        """
+        Выгружает из БД список задач, запущенных ранее в обработку.
+        Возвращает словарь {job_id: ProcessingTask}, сохраняя его в self.queued_tasks.
         """
         dao_request = self.dao.find(
                                     collection="tasks",
-                                    query={'status': {"$ne":"finished"}},
-                                    projection={
-                                                'task_id':1,
-                                                'job_id':1                                               
-                                               }
+                                    query={'status': {"$in":["queued","running"]}},
+                                    projection={}
                                    )
         if dao_request:
-            logger.debug(f"Выгружено запущенных задач из БД: {len(dao_request)}")
+            logger.debug(f"Выгружено поставленных в очередь задач из БД: {len(dao_request)}")
         else:
-            logger.debug("Выгружено запущенных задач из БД: 0")
-        return {
-                task_data['task_id']:task_data['job_id']
-                for task_data in dao_request
-               }
+            logger.debug("Выгружено поставленных в очередь задач из БД: 0")
+
+        self.queued_tasks = {
+                             task_data['task_id']:ProcessingTask.from_dict(task_data)
+                             for task_data in dao_request
+                            }
+        return None
+
+    def _add_task_to_db_uploading(
+                                  self,
+                                  task: ProcessingTask
+                                 ) -> None:
+        """
+        Добавляет задание в список на выгрузку в БД.
+        """
+        collection = "tasks"
+        self.data_to_db[collection][task.task_id] = task
 
     def _create_task_id(
                         self,
