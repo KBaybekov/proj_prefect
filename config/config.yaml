@@ -91,15 +91,23 @@ scheduler:
   db_poll_interval: 10
   result_dir: "/common_share/github/proj_prefect/test/data/result/"
   processing_dir: "/common_share/github/proj_prefect/test/data/tmp/"
-  slurm_user: "kbajbekov"
-  slurm_poll_interval: 5
-  slurm_queue_size: 32
-  slurm_template: "/path-to-slurm_template"
+  slurm:
+    user: "kbajbekov"
+    poll_interval: 5
+    queue_size: 32
+    # Узел, на котором будет запущена head-задача
+    head_job_node: "vu10-2-027"
+    starting_script_template: "/path-to-slurm_template"
+
+  # Вспомогательные файлы, необходимые для пайплайнов
+  service_data:
+    reference_hg38: "hg38.fa"
+    reference_hg38_t2t: "hg38_t2t.fa"
 
   pipelines:
     # При изменении версии пайплайнов запускается реанализ всего даунстрима
     # В названии раздела указывается название и версия пайплайна
-    basecalling_r941_basic_v1.0.0:
+    basecalling_v1-0-0:
       name: basecalling
       version: v1.0.0
       input_data_shaper: data_shaper_ont_basecalling_v1-0-0.py
@@ -110,32 +118,38 @@ scheduler:
         - field: status
           type: eq       # Равенство
           value: indexed
-      #      - type: ne       # Не равно (поддержка массива)
-      #        field: pipeline_basecalling_{{ modifications }}_status
-      #        value: ["ok", "fail", "running"]
-      #      - type: gte      # Больше или равно
-      #        field: total_size
-      #        value: 10
-      #      - type: exists   # Проверка наличия поля
-      #        field: sample_id
-      resources:
-        reqpartition:
-          - gpu_nodes
-        time: "3-00:00"
-        mem: "640G"
-      # Указывается время выполнения пайплайна на стандартном образце. Необходим для корректного формирования очередей
-      estimated_time: 2d
+        #      - type: ne       # Не равно (поддержка массива)
+        #        field: pipeline_basecalling_{{ modifications }}_status
+        #        value: ["ok", "fail", "running"]
+        #      - type: gte      # Больше или равно
+        #        field: total_size
+        #        value: 10
+        #      - type: exists   # Проверка наличия поля
+        #        field: sample_id
+      # Тип сортировки и показатель, по которому будет производиться сортировка
+      sorting: "SJF,total_input_files_size"
+      # Дополнительные параметры SBATCH для запуска головного задания
+      # Указываются как параметр: значение
+      # sbatch_params:
+      #   partition: "gpu"
+      # Указывается время выполнения пайплайна на стандартном образце. Необходим для корректного формирования очередей. Формат: DAYS-HH:MM
+      timeout: "3-00:00"
+      !!! решить вопрос с TIMESTAMP
       command_template: |
         nextflow \
-        -log {{ output_dir }}/logs/nextflow/{{ run_id }}_{{ time_now }}_nxf.log \
-        run {{ nextflow_pipelines_dir }}/nxf_ont-basecalling \
-        -c {{ pipeline_config }} \
-        -name nxf_{{ run_id }} \
-        --pore r941 \
-        --modifications basic \
-        --outdir {{ output_dir }}
-      expected_output_files:
-        - "*.ubam"
-        - "*_sequali.json"
-        - "*_sequali.html"
-        - "*_multiqc_report.html"
+        -resume \
+        -log {{ NXF_LOG_FILE_ID }}_{{ TIMESTAMP }}.log \
+        run nxf-csp/ont-basecalling \
+        -c {{ NXF_CFG }} \
+        -name {{ NXF_RUN_NAME }} \
+        --input {{ INPUT_SAMPLESHEET }} \
+        --sample {{ SAMPLE }} \
+        --run_id {{ NXF_RUN_ID }} \
+        --outdir {{ OUTPUT_DIR }}
+      # словарь вида {тип_файлов: маска}
+      output_files_expected:
+        ubam: "*.ubam"
+        sequali_json: "*_sequali.json"
+        sequali_html: "*_sequali.html"
+        multiqc_report: "*_multiqc_report.html"
+

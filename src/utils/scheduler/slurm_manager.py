@@ -8,7 +8,7 @@ from pathlib import Path
 from pymongo.collection import Collection
 from utils.logger import get_logger
 from shlex import split as shlex_split
-from utils.scheduler.processing_task import SlurmTask
+from utils.scheduler.processing_task import ProcessingTask
 from json import loads as json_loads
 
 

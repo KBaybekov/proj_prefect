@@ -1,0 +1,59 @@
+#!/bin/bash
+
+# Автогенерируемый submit_script
+# Version: 1.0.0
+
+TIMESTAMP=$(date +"%d-%m-%Y_%H-%M-%S")
+
+# ------------------ SBATCH script generation ------------------
+SBATCH_PATH="{{ LOG_DIR }}/slurm/job_{{ JOB_NAME }}.sbatch"
+
+cat > "${SBATCH_PATH}" <<EOF
+#!/bin/bash
+#SBATCH -J "slurm_{{ JOB_NAME }}"
+#SBATCH --chdir="{{ WORK_DIR }}"
+#SBATCH --requeue
+#SBATCH --time={{ PIPELINE_TIMEOUT }}
+#SBATCH --nodelist={{ HEAD_JOB_NODE }}
+#SBATCH --ntasks=1
+#SBATCH --cpus-per-task=2
+#SBATCH --mem=8G
+#SBATCH --output={{ HEAD_JOB_STDOUT }}
+#SBATCH --error={{ HEAD_JOB_STDERR }}
+{% if SLURM_OPTIONS %}
+{% for key, value in SLURM_OPTIONS.items() %}
+#SBATCH --{{ key }}={{ value }}
+{% endfor %}
+{% endif %}
+
+# ------------------ NEXTFLOW variables & command ------------------
+# Nextflow variables
+export NXF_EXECUTOR=slurm
+export NXF_OFFLINE=true
+export NXF_WORK="{{ WORK_DIR }}"
+export NXF_LOG_FILE="{{ LOG_DIR }}nextflow/nxf_{{ JOB_NAME }}.log"
+export NXF_DATE_FORMAT="dd-MM-yyyy_HH:mm:ss"
+export NXF_ANSI_LOG=false
+export NXF_DISABLE_CHECK_LATEST=true
+{% if NXF_VARIABLES %}
+{% for key, value in NXF_VARIABLES.items() %}
+export {{ key }}={{ value }}
+{% endfor %}
+{% endif %}
+
+# other environment variables
+{% if ENV_VARS %}
+{% for key, value in ENV_VARS.items() %}
+export {{ key }}={{ value }}
+{% endfor %}
+{% endif %}
+
+# Run Nextflow
+{{ NXF_COMMAND }}
+
+# ------------------ EXIT-CODE storing ------------------
+echo \$? > {{ HEAD_JOB_EXITCODE_F }}
+EOF
+
+echo "Submitting ${SBATCH_PATH} ..."
+sbatch "${SBATCH_PATH}" || { echo "sbatch failed"; exit 1; }

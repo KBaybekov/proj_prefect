@@ -52,6 +52,8 @@ class TaskScheduler:
         self._create_new_tasks()
         # Постановка заданий в очередь Slurm
         self._put_tasks_in_queue()
+        # Удаляем конфиг для экономии памяти
+        self._cfg.clear()
 
 
         return
@@ -63,8 +65,11 @@ class TaskScheduler:
         Загрузка конфигурации пайплайнов из общей конфигурации.
         """
         self.pipelines = {
-                          pipeline:Pipeline(pipeline_data)
-                          for pipeline, pipeline_data in self._cfg['pipelines'].items()
+                          pipeline_id:Pipeline(
+                                               _cfg=pipeline_id,
+                                               id=pipeline_data
+                                              )
+                          for pipeline_id, pipeline_data in self._cfg['pipelines'].items()
                          }
         
         logger.info(f"Загружено {len(self.pipelines)} пайплайнов:\n{'\n\t'.join(self.pipelines.keys())}.")
@@ -125,6 +130,34 @@ class TaskScheduler:
                                           sample,
                                           pipeline    
                                          )
+                        
+    def _create_task(
+                     self,
+                     task_id:str,
+                     sample:dict,
+                     pipeline:Pipeline
+                    ) -> Optional[ProcessingTask]:
+        """
+        Формирует задание на обработку
+        """
+        logger.debug(f"Создание задания {task_id}")
+        # Запрашиваем данные образца из БД
+        sample_db_data = self.dao.find_one(
+                                           collection='samples',
+                                           query={
+                                                  'name': sample['name'],
+                                                  'fingerprint': sample['fingerprint']
+                                                 },
+                                           projection={}
+                                          )
+        if sample_db_data:
+            sample_meta = SampleMeta.from_db(sample_db_data)
+            
+        else:
+            logger.error(f"Не удалось найти образец {sample['name']} с отпечатком {sample['fingerprint']} в БД.")
+
+                        
+
 
     def _actualize_queued_tasks_data(
                                      self
@@ -161,7 +194,8 @@ class TaskScheduler:
                 self._add_task_to_db_uploading(task)
 
         # Удаление завершённых заданий из списка поставленных в очередь
-        !!!
+        for task_id in unqueued_tasks:
+            self._remove_task_from_queued_in_TaskScheduler(task_id)
         return None
 
     def _get_queued_tasks_from_db(
@@ -196,6 +230,15 @@ class TaskScheduler:
         """
         collection = "tasks"
         self.data_to_db[collection][task.task_id] = task
+        return None
+
+    def _remove_task_from_queued_in_TaskScheduler(
+                                                  self,
+                                                  task_id: str
+                                                 ) -> None:
+        if task_id in self.queued_tasks:
+            del self.queued_tasks[task_id]
+            logger.debug(f"Задание {task_id} удалено из списка поставленных в очередь.")
 
     def _create_task_id(
                         self,
@@ -204,16 +247,6 @@ class TaskScheduler:
                        ) -> str:
         return f"{sample['sample']}_{sample['fingerprint']}_{pipeline.name}_{pipeline.version}"    
         
-    def _create_task(
-                     self,
-                     task_id,
-                     sample,
-                     pipeline
-                    ) -> SlurmTask:
-        """
-        Формирует задание на обработку
-        """
-        # Запрашиваем
 
     def _task_exists(
                      self,

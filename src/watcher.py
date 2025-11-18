@@ -14,7 +14,7 @@ from prefect.cache_policies import NO_CACHE
 
 from utils.common import load_yaml, setup_parser
 from utils.db.db import ConfigurableMongoDAO, _load_db_config_yaml, get_mongo_client
-from utils.filesystem.crawler import FsCrawler
+from utils.filesystem.crawler.fs_crawler import FsCrawler
 from utils.scheduler.task_scheduler import TaskScheduler
 from utils.logger import get_logger
 
