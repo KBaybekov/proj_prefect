@@ -3,7 +3,6 @@
 Хранение метаданных батчей исходных файлов
 """
 from . import update_file_in_meta, min_datetime, max_datetime, update_fingerprint, generate_final_fingerprint
-from .file_set import FileSet
 from .source_file_meta import SourceFileMeta
 from utils.logger import get_logger
 from dataclasses import dataclass, field
@@ -27,7 +26,7 @@ class BatchMeta:
     modified: Optional[datetime] = field(default=None)
     # Определяем по ходу наполнения батча файлами
     fingerprint: str = field(default_factory=str)
-    files: FileSet = field(default_factory=FileSet)
+    files: Dict[Path, str] = field(default_factory=dict)
     samples: Set[str] = field(default_factory=set)
     size: int = field(default=0)
     # внутренний хэш-аккумулятор для fingerprint
@@ -51,20 +50,27 @@ class BatchMeta:
         """
         # Инициализируем основные поля BatchMeta
         batch = BatchMeta(
-            name=doc.get("name", ""),
-            final_summary=Path(doc.get("final_summary", "")),
-            sequencing_summary=Path(doc.get("sequencing_summary", "")),
-            created=doc.get("created"),
-            modified=doc.get("modified"),
-            fingerprint=doc.get("fingerprint", ""),
-            samples=set(doc.get("samples", [])),
-            status=doc.get("status", "indexed"),
-            changes=doc.get("changes", {}),
-            previous_version=doc.get("previous_version", ""),
-        )
-
-        if "files" in doc:
-            batch.files = FileSet.from_db(doc["files"])
+                          name=doc.get("name", ""),
+                          final_summary=Path(doc.get("final_summary", "")),
+                          sequencing_summary=Path(doc.get("sequencing_summary", "")),
+                          created=doc.get("created"),
+                          modified=doc.get("modified"),
+                          fingerprint=doc.get("fingerprint", ""),
+                          files={
+                                 Path(file):fingerprint for file,fingerprint
+                                 in doc.get("files", {}).items()
+                                },
+                          samples=set(doc.get("samples", [])),
+                          size=doc.get("size", 0),
+                          status=doc.get("status", "indexed"),
+                          changes=doc.get("changes", {}),
+                          previous_version=doc.get("previous_version", ""),
+                         )
+        # Восстанавливаем внутренний хэш-аккумулятор
+        if "fingerprint" in doc:
+            batch._fingerprint = hashlib_blake2s()
+            batch._fingerprint = update_fingerprint(batch._fingerprint,
+                                                     batch.fingerprint)
 
         return batch
 
@@ -110,16 +116,11 @@ class BatchMeta:
 
     def add_file2batch(self, src: SourceFileMeta) -> bool:
         """
-        Добавляет SourceFileMeta в соответствующий поднабор (fast5/pod5 + pass/fail).
+        Добавляет SourceFileMeta в набор файлов.
         Ожидается, что src.symlink уже установлен.
         """
-        if self.files._file_added_to_fileset(
-                                             src.symlink,
-                                             src.fingerprint,
-                                             src.extension,
-                                             src.size,
-                                             src.quality_pass
-                                            ):
+        if src.symlink not in self.files:
+            self.files[src.symlink] = src.fingerprint
             # Добавляем образец, к которому относится файл, к списку образцов
             self.samples.add(src.sample)
             # Обновляем дату создания и последнего изменения батча
@@ -173,31 +174,26 @@ class BatchMeta:
 
         meta_file_id = src['symlink']
         file_size:int = src['size'] # type: ignore
-        if meta_file_id in self.files.files:
+        if meta_file_id in self.files:
             logger.debug(f"Удаление файла {meta_file_id} из батча {self.name}...")
-            file_removed = self.files.remove_from_fileset(
-                                                          Path(str(meta_file_id)),
-                                                          str(src['extension']),
-                                                          file_size,
-                                                          src['quality_pass'] # type: ignore
-                                                         ) 
-            if file_removed:
-                self.size -= file_size
-                self.modified = datetime.now()
-                self.changes[Path(meta_file_id)] = {'status':'deleted'}
-                logger.debug(f"Файл {meta_file_id} был удалён из батча {self.name}.")
-                # Обновляем отпечаток, убирая рандомные пару букв сурса
-                if not self._fingerprint:
-                    self._fingerprint = hashlib_blake2s()
-                    self._fingerprint.update(self.fingerprint.encode())
-                self._fingerprint = update_fingerprint(
-                                                       main_fingerprint=self._fingerprint,
-                                                       fingerprint2add=src['fingerprint'][1:] # type: ignore
-                                                      )
-                # Проверяем, остались ли ещё файлы. Если нет - помечаем батч как устаревший
-                if not self.files.files:
-                    logger.debug(f"Батч {self.name} пуст. Меняем статус на 'deprecated'...")
-                    self.status = 'deprecated'
+            del self.files[meta_file_id]
+            file_removed = True
+            self.size -= file_size
+            self.modified = datetime.now()
+            self.changes[Path(meta_file_id)] = {'status':'deleted'}
+            logger.debug(f"Файл {meta_file_id} был удалён из батча {self.name}.")
+            # Обновляем отпечаток, убирая рандомные пару букв сурса
+            if not self._fingerprint:
+                self._fingerprint = hashlib_blake2s()
+                self._fingerprint.update(self.fingerprint.encode())
+            self._fingerprint = update_fingerprint(
+                                                    main_fingerprint=self._fingerprint,
+                                                    fingerprint2add=src['fingerprint'][1:] # type: ignore
+                                                    )
+            # Проверяем, остались ли ещё файлы. Если нет - помечаем батч как устаревший
+            if not self.files:
+                logger.debug(f"Батч {self.name} пуст. Меняем статус на 'deprecated'...")
+                self.status = 'deprecated'
         else:
             logger.error(f"Файл {meta_file_id} не найден в батче {self.name}!")
         return file_removed

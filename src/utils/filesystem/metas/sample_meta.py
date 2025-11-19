@@ -23,7 +23,7 @@ class SampleMeta:
     """
     # Определяем при инициализации 
     name: str
-    files: FileSet = field(default_factory=FileSet)
+    files: Dict[Path, str] = field(default_factory=dict)
     # Наполняем после прохода по всем файлам
     batches: Set[str] = field(default_factory=set)
     size: int = 0
@@ -56,21 +56,22 @@ class SampleMeta:
         """
         # Инициализируем основные поля SampleMeta
         sample = SampleMeta(
-            name=doc.get("name", ""),
-            batches=set(doc.get("batches", [])),
-            size=doc.get("size", 0),
-            created=doc.get("created"),
-            modified=doc.get("modified"),
-            fingerprint=doc.get("fingerprint", ""),
-            status=doc.get("status", "indexed"),
-            tasks=doc.get("tasks", {}),
-            changes=doc.get("changes", {}),
-            previous_version=doc.get("previous_version", ""),
-        )
+                            name=doc.get("name", ""),
+                            batches=set(doc.get("batches", [])),
+                            files={
+                                   Path(file):fingerprint for file,fingerprint
+                                   in doc.get("files", {}).items()
+                                  },
+                            size=doc.get("size", 0),
+                            created=doc.get("created"),
+                            modified=doc.get("modified"),
+                            fingerprint=doc.get("fingerprint", ""),
+                            status=doc.get("status", "indexed"),
+                            tasks=doc.get("tasks", {}),
+                            changes=doc.get("changes", {}),
+                            previous_version=doc.get("previous_version", ""),
+                           )
 
-        if "files" in doc:
-            sample.files = FileSet.from_db(doc["files"])
-        
         # Восстанавливаем внутренний хэш-аккумулятор
         if "fingerprint" in doc:
             sample._fingerprint = hashlib_blake2s()
@@ -80,13 +81,13 @@ class SampleMeta:
         return sample
 
     def update_sample(
-                        self,
-                        change_type:str,
-                        batch_meta: BatchMeta,
-                        file_meta: Optional[SourceFileMeta]=None,
-                        file_meta_dict:Optional[Dict[str, str|int|datetime]]=None,
-                        file_diffs:dict={}
-                       ) -> bool:
+                      self,
+                      change_type:str,
+                      batch_meta: BatchMeta,
+                      file_meta: Optional[SourceFileMeta]=None,
+                      file_meta_dict:Optional[Dict[str, str|int|datetime]]=None,
+                      file_diffs:dict={}
+                     ) -> bool:
         """
         Обновляет объект SampleMeta:
         - если файл был добавлен — проводит процедуру добавления меты файла в образец
@@ -157,13 +158,8 @@ class SampleMeta:
         """
 
         # Добавляем, если файл не добавлен ранее
-        if self.files._file_added_to_fileset(
-                                             file_meta.symlink,
-                                             file_meta.fingerprint,
-                                             file_meta.extension,
-                                             file_meta.size,
-                                             file_meta.quality_pass
-                                            ):
+        if file_meta.symlink not in self.files:
+            self.files[file_meta.symlink] = file_meta.fingerprint
             self.size += file_meta.size
             self._fingerprint = update_fingerprint(
                                                    main_fingerprint=self._fingerprint,
@@ -205,15 +201,14 @@ class SampleMeta:
         file_removed: bool = False
         if file_meta_dict:
             file_id = str(file_meta_dict['symlink'])
+            file_id_pathed = Path(file_id)
             file_size = int(file_meta_dict['size']) # type: ignore
-            file_removed = self.files.remove_from_fileset(
-                                                          Path(str(file_meta_dict['symlink'])),
-                                                          str(file_meta_dict['extension']),
-                                                          int(file_meta_dict["size"]), # type: ignore
-                                                          file_meta_dict['quality_pass'] # type: ignore
-                                                         )
+            if file_id_pathed in self.files:
+                logger.debug(f"  Удаление метаданных файла {file_id}")
+                del self.files[file_id_pathed]
+                file_removed = True
             if file_removed:
-                logger.debug(f"  Метаданных файла {file_id} удалены")
+                logger.debug(f"  Метаданные файла {file_id} удалены")
                 self.size -= file_size
                 self.modified = datetime.now()
                 if not self._fingerprint:
@@ -223,7 +218,7 @@ class SampleMeta:
                                                             str(file_meta_dict['fingerprint'])[1:]
                                                             )
                     # Помечаем образец как неактуальный, если у него не осталось файлов И батчей на курации
-                    if not self.files.files:
+                    if not self.files:
                         logger.debug(f"  Образец пуст")
                         self.status = 'deprecated'
             else:
