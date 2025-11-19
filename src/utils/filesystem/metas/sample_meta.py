@@ -3,7 +3,6 @@
 Хранение метаданных образцов
 """
 from . import update_file_in_meta, min_datetime, max_datetime, update_fingerprint, generate_final_fingerprint
-from .file_set import FileSet
 from .source_file_meta import SourceFileMeta
 from .batch_meta import BatchMeta
 from utils.logger import get_logger
