@@ -243,7 +243,7 @@ class ProcessingTask:
                       self
                      ) -> None:
         self.sample, self.sample_fingerprint, self.pipeline_name, self.pipeline_version = self.task_id.split("_")
-        self.sample_id = f"{self.sample}_{self.sample_fingerprint[:2]}"
+        self.sample_id = f"{self.sample}_{self.sample_fingerprint}"
         
 
     def _put_in_queue(

@@ -22,6 +22,7 @@ class SampleMeta:
     """
     # Определяем при инициализации 
     name: str
+    short_id: str = field(default_factory=str)
     files: Dict[Path, str] = field(default_factory=dict)
     # Наполняем после прохода по всем файлам
     batches: Set[str] = field(default_factory=set)
@@ -56,6 +57,7 @@ class SampleMeta:
         # Инициализируем основные поля SampleMeta
         sample = SampleMeta(
                             name=doc.get("name", ""),
+                            short_id=doc.get("short_id", ""),
                             batches=set(doc.get("batches", [])),
                             files={
                                    Path(file):fingerprint for file,fingerprint
@@ -226,3 +228,4 @@ class SampleMeta:
 
     def finalize(self):
         self.fingerprint = generate_final_fingerprint(self._fingerprint)
+        self.short_id = f"{self.name}_{self.fingerprint[:6]}"
