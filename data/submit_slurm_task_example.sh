@@ -51,6 +51,7 @@ export NXF_DISABLE_CHECK_LATEST=true
 
 # Pipeline variables
 export GPUS_4_BASECALLING=${GPUS_4_BASECALLING}
+export GPU_IDS_FOR_BASECALLING="6"
 
 nextflow run nxf-csp/ont-basecalling/ \
   -resume \

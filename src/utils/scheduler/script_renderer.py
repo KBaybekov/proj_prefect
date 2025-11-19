@@ -60,3 +60,19 @@ class ScriptRenderer:
         script_path.write_text(rendered)
         return script_path
 
+    def render_string(
+                      self,
+                      template: str,
+                      **kwargs
+                     ) -> str:
+        """
+        Принимает шаблон строки и произвольные аргументы.
+        Возвращает сгенерированную строку.
+        """
+        if kwargs:
+            # Создаём временный шаблон из строки
+            jinja_template = self.env.from_string(template)
+            return jinja_template.render(**kwargs)
+        else:
+            # Если нет переменных — возвращаем как есть
+            return template

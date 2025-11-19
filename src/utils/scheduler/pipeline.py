@@ -1,19 +1,24 @@
+from .shaper_loader import load_shaper_functions
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Set
+from typing import Any, Callable, Dict, List, Optional
 from pathlib import Path
 
 @dataclass(slots=True)
 class Pipeline:
     _cfg:Dict[str, Any]
+    _shaper_dir:Path
     id:str
+    nextflow_config:Path
     name:str = field(default_factory=str)
     version:str = field(default_factory=str)
-    input_data_shaper:Path = field(default_factory=Path)
-    output_data_shaper:Path = field(default_factory=Path)
+    # Функции для обработки данных
+    shape_input:Optional[Callable] = field(default=None)
+    shape_output:Optional[Callable] = field(default=None)
     conditions:List[Dict[str, Any]] = field(default_factory=list)
     sorting_type:str = field(default_factory=str)
     sorting_indicator:str = field(default_factory=str)
     timeout:str = field(default_factory=str)
+    environment_variables:Dict[str, str] = field(default_factory=dict)
     sbatch_params:Dict[str, str] = field(default_factory=dict)
     cmd_template:str = field(default_factory=str)
     # словарь вида {тип_файлов: маска}
@@ -24,8 +29,9 @@ class Pipeline:
     def __post_init__(self):
         self.name = self._cfg.get('name', "")
         self.version = self._cfg.get('version', "")
-        self.input_data_shaper = Path(self._cfg.get('input_data_shaper', ""))
-        self.output_data_shaper = Path(self._cfg.get('output_data_shaper', ""))
+        self.shape_input, self.shape_output = load_shaper_functions(
+                                                shaper_path=(self._shaper_dir / self._cfg.get('data_shaper', ""))
+                                                                   )
         self.conditions = [
                            {
                             'field':condition.get('field'),
@@ -37,6 +43,7 @@ class Pipeline:
         if sort_data:
             self.sorting_type, self.sorting_indicator = sort_data.split(',')
         self.timeout = self._cfg.get('timeout', "00:00")
+        self.environment_variables = self._cfg.get('environment_variables', {})
         self.sbatch_params = self._cfg.get('sbatch_params', {})
         self.cmd_template = self._cfg.get('command_template', "")
         self.output_files_expected = self._cfg.get('output_files_expected', {})

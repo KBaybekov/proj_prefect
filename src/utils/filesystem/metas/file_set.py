@@ -137,7 +137,7 @@ class FileSet:
     def remove_from_fileset(self, file:Path, extension:str, size:int, qc_pass:bool) -> bool:
         """
         Удаляет файл из сета файлов (в зависимости от расширения) 
-        и соответствующего FileSubset.
+        и соответствующего FileSet.
         Возвращает True, если файл был удалён
         """
         file_removed: bool = False
@@ -145,18 +145,18 @@ class FileSet:
         if "fast5" in extension:
             file_removed = self.fast5.remove_file_from_subset(file, size, qc_pass)
             if file_removed:
-                logger.debug(f"Удалён файл {file} из FileSubset 'fast5'")
+                logger.debug(f"Удалён файл {file} из FileSet 'fast5'")
         elif "pod5" in extension:
             file_removed = self.pod5.remove_file_from_subset(file, size, qc_pass)
             if file_removed:
-                logger.debug(f"Удалён файл {file} из FileSubset 'pod5'")
+                logger.debug(f"Удалён файл {file} из FileSet 'pod5'")
         elif any([
                 fq_ext in extension
                 for fq_ext in ['fq', 'fastq']
                 ]):
             file_removed = self.fq.remove_file_from_subset(file, size, qc_pass)
             if file_removed:
-                logger.debug(f"Удалён файл {file} из FileSubset 'fq'")
+                logger.debug(f"Удалён файл {file} из FileSet 'fq'")
 
         if file_removed:
             del self.files[file]

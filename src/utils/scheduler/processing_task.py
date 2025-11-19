@@ -63,8 +63,7 @@ class TaskSlurmJob:
                                )
         
         else:
-            self.finish = datetime.now(timezone.utc)
-            self._collect_completed_process_data()
+            self._complete()
 
     def _complete(
                   self,
@@ -178,8 +177,9 @@ class ProcessingTask:
     # Шаблон имени: sample_sample-fingerprint_pipeline-name_pipeline-version
     task_id:str
     sample:str = field(default_factory=str)
-    pipeline_name:str = field(default_factory=str)
     sample_fingerprint:str = field(default_factory=str)
+    sample_id:str = field(default_factory=str)
+    pipeline_name:str = field(default_factory=str)
     pipeline_version:str = field(default_factory=str)
     # Файлы
     data: TaskData = field(default_factory=TaskData)
@@ -215,29 +215,37 @@ class ProcessingTask:
         """
         # Инициализируем основные поля SampleMeta
         processing_task = ProcessingTask(
-                               task_id=doc.get("task_id", ""),
-                               sample=doc.get("sample", ""),
-                               pipeline_name=doc.get("pipeline_name", ""),
-                               sample_fingerprint=doc.get("sample_fingerprint", ""),
-                               pipeline_version=doc.get("pipeline_version", ""),
-                               data=TaskData.from_dict(doc.get("data", "")),
-                               created=doc.get("created"),
-                               queued=doc.get("queued"),
-                               finish=doc.get("finish"),
-                               last_update=doc.get("last_update"),
-                               time_from_creation_to_finish=doc.get("time_from_creation_to_finish", ""),
-                               time_in_processing=doc.get("time_in_processing", ""),
-                               status=doc.get("status", ""),
-                               slurm_main_job=TaskSlurmJob.from_dict(doc.get("slurm_main_job", {})),
-                               slurm_child_jobs={
-                                                 job_id:TaskSlurmJob.from_dict(job_data)
-                                                 for job_id, job_data in
-                                                 doc.get("slurm_child_jobs", {}).items()
-                                                 },
-                               exit_code=doc.get("exit_code")
+                                         task_id=doc.get("task_id", ""),
+                                         sample=doc.get("sample", ""),
+                                         sample_fingerprint=doc.get("sample_fingerprint", ""),
+                                         sample_id=doc.get("sample_id", ""),
+                                         pipeline_name=doc.get("pipeline_name", ""),
+                                         pipeline_version=doc.get("pipeline_version", ""),
+                                         data=TaskData.from_dict(doc.get("data", "")),
+                                         created=doc.get("created"),
+                                         queued=doc.get("queued"),
+                                         finish=doc.get("finish"),
+                                         last_update=doc.get("last_update"),
+                                         time_from_creation_to_finish=doc.get("time_from_creation_to_finish", ""),
+                                         time_in_processing=doc.get("time_in_processing", ""),
+                                         status=doc.get("status", ""),
+                                         slurm_main_job=TaskSlurmJob.from_dict(doc.get("slurm_main_job", {})),
+                                         slurm_child_jobs={
+                                                           job_id:TaskSlurmJob.from_dict(job_data)
+                                                           for job_id, job_data in
+                                                           doc.get("slurm_child_jobs", {}).items()
+                                                          },
+                                         exit_code=doc.get("exit_code")
                               )
         return processing_task
     
+    def __post_init__(
+                      self
+                     ) -> None:
+        self.sample, self.sample_fingerprint, self.pipeline_name, self.pipeline_version = self.task_id.split("_")
+        self.sample_id = f"{self.sample}_{self.sample_fingerprint[:2]}"
+        
+
     def _put_in_queue(
                       self
                      ) -> None:

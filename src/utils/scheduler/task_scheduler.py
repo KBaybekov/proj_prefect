@@ -66,8 +66,10 @@ class TaskScheduler:
         """
         self.pipelines = {
                           pipeline_id:Pipeline(
-                                               _cfg=pipeline_id,
-                                               id=pipeline_data
+                                               _cfg=pipeline_data,
+                                               _shaper_dir=Path(self._cfg['shaper_dir']),
+                                               id=pipeline_id,
+                                               nextflow_config=self._cfg.get('nextflow_config', '')
                                               )
                           for pipeline_id, pipeline_data in self._cfg['pipelines'].items()
                          }

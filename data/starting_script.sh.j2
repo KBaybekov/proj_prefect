@@ -31,7 +31,7 @@ cat > "${SBATCH_PATH}" <<EOF
 export NXF_EXECUTOR=slurm
 export NXF_OFFLINE=true
 export NXF_WORK="{{ WORK_DIR }}"
-export NXF_LOG_FILE="{{ LOG_DIR }}nextflow/nxf_{{ JOB_NAME }}.log"
+export NXF_LOG_FILE="{{ LOG_DIR }}nextflow/nxf_{{ JOB_NAME }}_${TIMESTAMP}.log"
 export NXF_DATE_FORMAT="dd-MM-yyyy_HH:mm:ss"
 export NXF_ANSI_LOG=false
 export NXF_DISABLE_CHECK_LATEST=true

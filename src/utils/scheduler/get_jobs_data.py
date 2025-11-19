@@ -206,7 +206,7 @@ yml = Path('/mnt/cephfs8_rw/nanopore2/test_space/results/7777/45gd/logs/slurm/sl
 print('starting...')
 main_proc = _run_cmd(cmd=[
                         'bash',
-                        '/raid/kbajbekov/common_share/github/proj_prefect/data/submit_slurm_task.sh'
+                        '/raid/kbajbekov/common_share/github/proj_prefect/data/submit_slurm_task_example.sh'
                         ])
 print('started')
 

@@ -91,6 +91,13 @@ scheduler:
   db_poll_interval: 10
   result_dir: "/common_share/github/proj_prefect/test/data/result/"
   processing_dir: "/common_share/github/proj_prefect/test/data/tmp/"
+  # Директория с файлами шейперов
+  shapers_dir: "/raid/kbajbekov/common_share/github/proj_prefect/data/data_shapers/"
+  # Файл конфигурации организации для Nextflow
+  nextflow_config: "/path-to-nextflow.config"
+
+# SCHEDULER INFO
+slurm:
   slurm:
     user: "kbajbekov"
     poll_interval: 5
@@ -107,11 +114,10 @@ scheduler:
   pipelines:
     # При изменении версии пайплайнов запускается реанализ всего даунстрима
     # В названии раздела указывается название и версия пайплайна
-    basecalling_v1-0-0:
-      name: basecalling
+    ont-basecalling_v1-0-0:
+      name: ont-basecalling
       version: v1.0.0
-      input_data_shaper: data_shaper_ont_basecalling_v1-0-0.py
-      output_data_shaper: db_filler_ont_basecalling_v1-0-0.py
+      data_shaper: data_shaper_ont-basecalling_v1-0-0.py
       # conditions: прописываются условия, позволяющие исключить как уже обработанные образцы,
       # так и не обработанные образцы, не подходящие по входным параметрам
       conditions:
@@ -134,18 +140,20 @@ scheduler:
       #   partition: "gpu"
       # Указывается время выполнения пайплайна на стандартном образце. Необходим для корректного формирования очередей. Формат: DAYS-HH:MM
       timeout: "3-00:00"
-      !!! решить вопрос с TIMESTAMP
+      environment_variables:
+        GPUS_FOR_BASECALLING: "1"
+        GPU_IDS_FOR_BASECALLING: "6"
+      # !!! ВНИМАНИЕ !!! При изменении шаблона команды необходимо изменять и соответствующий шейпер
       command_template: |
         nextflow \
-        -resume \
-        -log {{ NXF_LOG_FILE_ID }}_{{ TIMESTAMP }}.log \
         run nxf-csp/ont-basecalling \
         -c {{ NXF_CFG }} \
-        -name {{ NXF_RUN_NAME }} \
+        -name nxf_{{ JOB_NAME }}_${TIMESTAMP} \
         --input {{ INPUT_SAMPLESHEET }} \
         --sample {{ SAMPLE }} \
         --run_id {{ NXF_RUN_ID }} \
-        --outdir {{ OUTPUT_DIR }}
+        --outdir {{ OUTPUT_DIR }} \
+        -resume
       # словарь вида {тип_файлов: маска}
       output_files_expected:
         ubam: "*.ubam"
