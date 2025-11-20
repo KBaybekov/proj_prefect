@@ -18,7 +18,8 @@ def get_nxf_cfg_arg(
 
 def generate_pipeline_input_data(
                                  cmd_template: str,
-                                 
+                                 sample:SampleMeta,
+                                 result:ResultMeta,
                                  task:ProcessingTask,
                                  service_data: Dict[str, Any]
                                 ) -> Tuple[str, Path]:

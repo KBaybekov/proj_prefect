@@ -1,7 +1,7 @@
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set
+from typing import Any, Dict, Callable, Optional, Set
 import subprocess
 from utils.logger import get_logger
 
@@ -122,15 +122,16 @@ class TaskSlurmJob:
 
 @dataclass(slots=True)
 class TaskData:
-    # Словарь вида {тип файлов: множество путей к файлам}
-    input_files:Dict[str,Set[Path]] = field(default_factory=dict)
-    input_files_size:Dict[str,int] = field(default_factory=dict)
-    # словарь вида {тип_файлов: маска}
-    output_files_expected:Dict[str, str] = field(default_factory=dict)
-    output_files:Dict[str,Set[Path]] = field(default_factory=dict)
-    total_input_files_size:int = field(default=0)
-    input_data_shaper:Path = field(default_factory=Path)
-    output_data_shaper:Path = field(default_factory=Path)
+    # Словарь вида {группа файлов: {тип файлов: множество путей к файлам}}
+    input_data:Dict[str, Dict[str,Set[Path]]] = field(default_factory=dict)
+    input_files_size:int = field(default=0)
+    # словарь вида {группа(например, QC): {тип_файлов: маска для поиска}}
+    expected_output_data:Dict[str, Dict[str,str]] = field(default_factory=dict)
+    # словарь вида {группа(например, QC): {тип_файлов: множество путей к файлам}}
+    output_data:Dict[str, Dict[str,Set[Path]]] = field(default_factory=dict)
+    output_files_size:int = field(default=0)
+    input_data_shaper:Optional[Callable] = field(default=None)
+    output_data_shaper:Optional[Callable] = field(default=None)
     starting_script:Path = field(default_factory=Path)
     work_dir:Path = field(default_factory=Path)
     result_dir:Path = field(default_factory=Path)
@@ -144,22 +145,23 @@ class TaskData:
 
     @staticmethod
     def from_dict(doc: Dict[str, Any]) -> 'TaskData':
+        def __extract_data_from_doc(
+                                    item: Dict[str, Any]
+                                   ) -> Dict[str, Dict[str,Set[Path]]]:
+            extracted_data = {}
+            for group_name, group_data in item.items():
+                unpacked_data = {}
+                for filetype, files in group_data.items():
+                    unpacked_data[filetype] = set([Path(f) for f in files])
+                extracted_data[group_name] = unpacked_data
+            return extracted_data
+
         task_data = TaskData(
-                             input_files={
-                                          group_name:{Path(path) for path in paths}
-                                          for group_name, paths in
-                                          doc.get("input_files", {}).items()
-                                         },
-                             output_files={
-                                           group_name:{Path(path) for path in paths}
-                                           for group_name, paths in
-                                           doc.get("output_files", {}).items()
-                                          },
-                             input_files_size=doc.get("input_files_size", {}),
-                             output_files_expected=doc.get("output_files_expected", {}),
-                             total_input_files_size=doc.get("total_input_files_size", 0),
-                             input_data_shaper=Path(doc.get("input_data_shaper", "")),
-                             output_data_shaper=Path(doc.get("output_data_shaper", "")),
+                             input_data=__extract_data_from_doc(doc.get("input_data", {})),
+                             expected_output_data=doc.get("expected_output_data", {}),
+                             output_data=__extract_data_from_doc(doc.get("output_data", {})),
+                             input_files_size=doc.get("input_files_size", 0),
+                             output_files_size=doc.get("output_files_size", 0),
                              starting_script=Path(doc.get("starting_script", "")),
                              work_dir=Path(doc.get("work_dir", "")),
                              result_dir=Path(doc.get("result_dir", "")),
@@ -170,6 +172,39 @@ class TaskData:
                             )
 
         return task_data
+    
+    def _check_input_files(
+                           self
+                          ) -> None:
+
+    def _check_output_files(
+                            self
+                           ) -> None:
+        """
+        Осуществляет поиск ожидаемых выходных файлов по маскам в self.expected_output_data.
+        Сохраняет результаты в self.output_data.
+        """
+        logger.debug(f"Поиск выходных файлов в папке {self.result_dir.as_posix()}")
+        if self.result_dir.exists():
+            for file_group, filetypes in self.expected_output_data.items():
+                self.output_data[file_group] = {}
+                for filetype, file_mask in filetypes.items():
+                    # проводим поиск файлов по маске, добавляем только файлы с НЕНУЛЕВЫМИ размерами
+                    files = set([
+                                f for f in self.result_dir.rglob(file_mask)
+                                if all([
+                                        f.is_file(),
+                                        f.stat().st_size > 0
+                                       ])
+                                ])
+                    if files:
+                        logger.debug(f"Найдено файлов группы {file_group}: {len(files)}")
+                    else:
+                        logger.error(f"Файлы группы не {file_group} найдены")
+                    self.output_data[file_group].update({filetype:files})
+        else:
+            logger.error(f"Папка результата {self.result_dir.as_posix()} не найдена.")
+        return None
 
 
 @dataclass(slots=True)
@@ -310,25 +345,7 @@ class ProcessingTask:
                                          )
 
         # Поиск выходных файлов в папке результата
-        logger.debug(f"Поиск выходных файлов в папке {self.data.result_dir.as_posix()}")
-        if self.data.result_dir.exists():
-            for file_group, file_mask in self.data.output_files_expected.items():
-                # проводим поиск файлов по маске, добавляем только файлы с НЕНУЛЕВЫМИ размерами
-                files = set([
-                             f for f in self.data.result_dir.rglob(file_mask)
-                             if all([
-                                     f.is_file(),
-                                     f.stat().st_size > 0
-                                    ])
-                           ])
-                if files:
-                    logger.debug(f"Найдено файлов группы {file_group}: {len(files)}")
-                else:
-                    logger.error(f"Файлы группы не {file_group} найдены")
-                self.data.output_files[file_group] = files
-        else:
-            logger.error(f"Папка результата {self.data.result_dir.as_posix()} не найдена.")
-        
+        self.data._check_output_files()        
         return None
 
 

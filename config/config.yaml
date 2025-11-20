@@ -133,7 +133,7 @@ slurm:
         #      - type: exists   # Проверка наличия поля
         #        field: sample_id
       # Тип сортировки и показатель, по которому будет производиться сортировка
-      sorting: "SJF,total_input_files_size"
+      sorting: "SJF,input_files_size"
       # Дополнительные параметры SBATCH для запуска головного задания
       # Указываются как параметр: значение
       # sbatch_params:
@@ -154,10 +154,36 @@ slurm:
         --run_id {{ NXF_RUN_ID }} \
         --outdir {{ OUTPUT_DIR }} \
         -resume
+
+      # Список файлов, относящихся к образцу, которые будут использоваться в пайплайне
+      # Структура:
+      # (обяз.) название_группы(произвольное, будет использоваться шейпером)
+      # # Затем указывается список источников, от 1 штуки. В каждом источнике указываются слеедующие элементы:
+      #   (обяз.) source: название_источника (sample/result). Если указывается sample, то подразумевается, что файлы будут браться из атрибута files
+      #   (опц.) attributes: нитка атрибутов из источника, по которым нужно вести поиск (например, outputs.data.ubam)
+      #   (обяз.) file_mask: список масок, по которым будут искаться файлы. Все файлы, найденные по указанным маскам, будут добавлены в указанную группу!
+      #   (опц.) requirements: список требований к файлам. Возможные требования: exists, not_empty, realpath, size_gte, size_lte, is_dir, is_file, is_symlink
+      #   (обяз.) condition: тип условия наличия данных этой группы.
+      #        Возможные значения:
+      #           required (данные необходимы для обработки)
+      #           preferred (данные желательны для обработки)
+      input_data:
+        ont_source_files:
+          - source: sample
+            file_mask: 
+              - "*.fast5"
+              - "*.pod5"
+            requirements:
+              - exists
+              - not_empty
+              - realpath
+            condition: "required"
       # словарь вида {тип_файлов: маска}
-      output_files_expected:
-        ubam: "*.ubam"
-        sequali_json: "*_sequali.json"
-        sequali_html: "*_sequali.html"
-        multiqc_report: "*_multiqc_report.html"
+      expected_output_data:
+        data:
+          ubam: "*.ubam"
+        qc:
+          sequali_json: "*_sequali.json"
+          sequali_html: "*_sequali.html"
+          multiqc_report: "*_multiqc_report.html"
 
