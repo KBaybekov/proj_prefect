@@ -35,6 +35,7 @@ def min_datetime(a: Optional[datetime], b: Optional[datetime]) -> Optional[datet
 
 from .batch_meta import BatchMeta
 from .sample_meta import SampleMeta
+from .source_file_meta import SourceFileMeta
 
 def update_file_in_meta(
                         meta_obj: Union[BatchMeta, SampleMeta],
