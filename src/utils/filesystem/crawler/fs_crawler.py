@@ -51,6 +51,8 @@ class FsCrawler():
         self.dao: ConfigurableMongoDAO = dao
         self.source_dir: Path = Path()
         self.link_dir: Path = Path()
+        self.processing_dir: Path = Path()
+        self.result_dir: Path = Path()
         self.filetypes: Tuple[str] = tuple()
         
         self.unique_file_properties = ['filepath', 'size', 'dev', 'ino', 'modified']
@@ -119,12 +121,14 @@ class FsCrawler():
                 if must_exist:
                     raise FileNotFoundError(f"Директория {dir_path.as_posix()} не существует")
                 else:
-                    dir_path.mkdir(parents=True)
+                    dir_path.mkdir(parents=True, exist_ok=True)
             return dir_path
 
         # Инициализация директорий
         self.source_dir = __get_dir_obj(self._cfg.get("source_dir", "."), must_exist=True)
         self.link_dir = __get_dir_obj(self._cfg.get("link_dir", "./links"))
+        self.processing_dir = __get_dir_obj(self._cfg.get("processing_dir", "./processing"))
+        self.result_dir = __get_dir_obj(self._cfg.get("result_dir", "./results"))
         
         # Дебаунсы
         self.db_debounce = int(self._cfg.get("db_writing_debounce", 10))
@@ -468,8 +472,13 @@ class FsCrawler():
             data:Dict[str, Union[str, Path|SourceFileMeta|BatchMeta|SampleMeta]] = getattr(self, collection, {})
             if data:
                 for meta in data.values():
-                    if isinstance(meta, (BatchMeta, SampleMeta)):
+                    if isinstance(meta, BatchMeta):
                         meta.finalize()
+                    elif isinstance(meta, SampleMeta):
+                        meta.finalize(
+                                      processing_dir=self.processing_dir,
+                                      result_dir=self.result_dir
+                                     )
                 if stage == 'init':
                     __execute_data_transition(
                                               collection=collection,

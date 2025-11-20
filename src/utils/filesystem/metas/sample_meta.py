@@ -38,6 +38,8 @@ class SampleMeta:
     # данные TaskScheduler
     # словарь вида {пайплайн: {id задания: статус}}
     tasks: Dict[str, Dict[str, str]] = field(default_factory=dict)
+    processing_dir: Path = field(default_factory=Path)
+    result_dir: Path = field(default_factory=Path)
     
     # История изменений
     status: str = field(default_factory=str)
@@ -226,6 +228,12 @@ class SampleMeta:
                 logger.error(f"Файл {file_id} не найден в образце {self.name}")
         return file_removed
 
-    def finalize(self):
+    def finalize(
+                 self,
+                 processing_dir:Path,
+                 result_dir:Path 
+                ):
+        self.processing_dir = processing_dir
+        self.result_dir = result_dir
         self.fingerprint = generate_final_fingerprint(self._fingerprint)
         self.sample_id = f"{self.name}_{self.fingerprint[:6]}"
