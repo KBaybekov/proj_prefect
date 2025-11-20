@@ -5,10 +5,10 @@ from datetime import datetime, timezone
 from utils.db.db import ConfigurableMongoDAO
 from utils.logger import get_logger
 from pathlib import Path
-from utils.scheduler.slurm_manager import SlurmManager
+from .slurm_manager import SlurmManager
 from utils.filesystem.metas import SampleMeta
-from utils.scheduler.pipeline import Pipeline
-from utils.scheduler.processing_task import ProcessingTask
+from classes.pipeline import Pipeline
+from classes.processing_task import ProcessingTask
 import subprocess
 
 
@@ -105,18 +105,18 @@ class TaskScheduler:
             # включаем образцы, отвечающие заданным условиям
             # исключаем образцы, у которых в tasks уже есть этот пайплайн
             pipeline.compatible_samples = self.dao.find(
-                                                   collection="samples",
-                                                   query={'status':'indexed',
-                                                          f'tasks.{pipeline.id}':{'$exists':False},
-                                                          **{condition['field']: {f"${condition['type']}":condition['value']}
-                                                          for condition in pipeline.conditions}
-                                                         },
-                                                   projection={
-                                                               "name":1,
-                                                               "fingerprint":1,
-                                                               "tasks":1
-                                                              }                
-                                                  )
+                                                        collection="samples",
+                                                        query={'status':'indexed',
+                                                               f'tasks.{pipeline.id}':{'$exists':False},
+                                                               **{condition['field']: {f"${condition['type']}":condition['value']}
+                                                                                       for condition in pipeline.conditions}
+                                                              },
+                                                        projection={
+                                                                    "name":1,
+                                                                    "fingerprint":1,
+                                                                    "tasks":1
+                                                                   }                
+                                                       )
             # Если есть образцы, подходящие для обработки, проверяем, не было ли ранее создано задание на обработку
             # Иначе - создаём его
             if pipeline.compatible_samples:
@@ -125,6 +125,7 @@ class TaskScheduler:
                     task_id = self._create_task_id(sample, pipeline)
                     # Проверяем на всякий случай, была ли задача запущена ранее, но не отмечена в sample.tasks
                     if self._task_exists(task_id):
+                        self._add_task_to_sample_tasklist(sample, pipeline)
                         continue
                     else:
                         self._create_task(

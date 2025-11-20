@@ -5,10 +5,9 @@ from datetime import datetime, timezone
 from ast import literal_eval 
 from typing import Any, Dict, IO, List, Optional, Set, Union
 from pathlib import Path
-from pymongo.collection import Collection
 from utils.logger import get_logger
 from shlex import split as shlex_split
-from utils.scheduler.processing_task import ProcessingTask
+from classes.processing_task import ProcessingTask
 from json import loads as json_loads
 
 
