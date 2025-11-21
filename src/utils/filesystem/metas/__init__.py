@@ -33,9 +33,11 @@ def max_datetime(a: Optional[datetime], b: Optional[datetime]) -> Optional[datet
 def min_datetime(a: Optional[datetime], b: Optional[datetime]) -> Optional[datetime]:
     return b if a is None or (b and b < a) else a
 
+from .source_file_meta import SourceFileMeta
 from .batch_meta import BatchMeta
 from .sample_meta import SampleMeta
-from .source_file_meta import SourceFileMeta
+from .result_meta import ResultMeta
+
 
 def update_file_in_meta(
                         meta_obj: Union[BatchMeta, SampleMeta],

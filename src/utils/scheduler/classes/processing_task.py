@@ -1,8 +1,12 @@
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
+from os import access as os_access, W_OK, R_OK
 from pathlib import Path
-from typing import Any, Dict, Callable, Optional, Set
+from typing import Any, Dict, Tuple, Optional, Set, Union
 import subprocess
+from scheduler import *
+from tools.script_renderer import ScriptRenderer
+from .pipeline import Pipeline
 from utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -122,32 +126,35 @@ class TaskSlurmJob:
 
 @dataclass(slots=True)
 class TaskData:
-    # Словарь вида {группа файлов: {тип файлов: множество путей к файлам}}
-    input_data:Dict[str, Dict[str,Set[Path]]] = field(default_factory=dict)
+    # Словарь вида {группа файлов: множество путей к файлам}}
+    input_data:Dict[str, Set[Path]] = field(default_factory=dict)
     input_files_size:int = field(default=0)
     # словарь вида {группа(например, QC): {тип_файлов: маска для поиска}}
     expected_output_data:Dict[str, Dict[str,str]] = field(default_factory=dict)
     # словарь вида {группа(например, QC): {тип_файлов: множество путей к файлам}}
     output_data:Dict[str, Dict[str,Set[Path]]] = field(default_factory=dict)
     output_files_size:int = field(default=0)
-    input_data_shaper:Optional[Callable] = field(default=None)
-    output_data_shaper:Optional[Callable] = field(default=None)
-    starting_script:Path = field(default_factory=Path)
+    start_script:Path = field(default_factory=Path)
     work_dir:Path = field(default_factory=Path)
     result_dir:Path = field(default_factory=Path)
     log_dir:Path = field(default_factory=Path)
-    head_job_stdout:Path = field(default_factory=Path)
+    head_job_stdout:Path = field(default_factory=Path) 
     head_job_stderr:Path = field(default_factory=Path)
     head_job_exitcode_f:Path = field(default_factory=Path)
 
-    
-
-
     @staticmethod
     def from_dict(doc: Dict[str, Any]) -> 'TaskData':
-        def __extract_data_from_doc(
-                                    item: Dict[str, Any]
-                                   ) -> Dict[str, Dict[str,Set[Path]]]:
+        def __extract_input_data_from_doc(
+                                          item: Dict[str, Any]
+                                         ) -> Dict[str, Set[Path]]:
+            extracted_data = {}
+            for group_name, files in item.items():
+                extracted_data[group_name] = set([Path(f) for f in files])
+            return extracted_data
+
+        def __extract_output_data_from_doc(
+                                           item: Dict[str, Any]
+                                          ) -> Dict[str, Dict[str,Set[Path]]]:
             extracted_data = {}
             for group_name, group_data in item.items():
                 unpacked_data = {}
@@ -157,12 +164,12 @@ class TaskData:
             return extracted_data
 
         task_data = TaskData(
-                             input_data=__extract_data_from_doc(doc.get("input_data", {})),
+                             input_data=__extract_input_data_from_doc(doc.get("input_data", {})),
                              expected_output_data=doc.get("expected_output_data", {}),
-                             output_data=__extract_data_from_doc(doc.get("output_data", {})),
+                             output_data=__extract_output_data_from_doc(doc.get("output_data", {})),
                              input_files_size=doc.get("input_files_size", 0),
                              output_files_size=doc.get("output_files_size", 0),
-                             starting_script=Path(doc.get("starting_script", "")),
+                             start_script=Path(doc.get("start_script", "")),
                              work_dir=Path(doc.get("work_dir", "")),
                              result_dir=Path(doc.get("result_dir", "")),
                              log_dir=Path(doc.get("log_dir", "")),
@@ -209,13 +216,11 @@ class TaskData:
 
 @dataclass(slots=True)
 class ProcessingTask:
-    # Шаблон имени: sample_sample-fingerprint_pipeline-name_pipeline-version
-    task_id:str
-    sample:str = field(default_factory=str)
-    sample_fingerprint:str = field(default_factory=str)
-    sample_id:str = field(default_factory=str)
-    pipeline_name:str = field(default_factory=str)
-    pipeline_version:str = field(default_factory=str)
+    sample_meta:SampleMeta
+    result_meta:ResultMeta
+    pipeline:Pipeline
+    # Шаблон имени: sample_id_pipeline-name_pipeline-version
+    task_id:str = field(default="")
     # Файлы
     data: TaskData = field(default_factory=TaskData)
     # Время
@@ -230,6 +235,7 @@ class ProcessingTask:
     # Статусы:
     #  - "created" - задание только создано;
     #  - "prepared" - подготовлены все данные, необходимые для обработки;
+    #  - "disprepared" - подготовка прошла неудачно;
     #  - "queued" - задание в очереди Slurm, обработка не начата;
     #  - "processing" - идёт обработка данных;
     #  - "completed" - задание успешно завершено;
@@ -251,11 +257,9 @@ class ProcessingTask:
         # Инициализируем основные поля SampleMeta
         processing_task = ProcessingTask(
                                          task_id=doc.get("task_id", ""),
-                                         sample=doc.get("sample", ""),
-                                         sample_fingerprint=doc.get("sample_fingerprint", ""),
-                                         sample_id=doc.get("sample_id", ""),
-                                         pipeline_name=doc.get("pipeline_name", ""),
-                                         pipeline_version=doc.get("pipeline_version", ""),
+                                         sample_meta=SampleMeta.from_db(doc.get("sample_meta", "")),
+                                         result_meta=ResultMeta.from_db(doc.get("result_meta", "")),
+                                         pipeline=Pipeline.from_db(doc.get("pipeline", "")),
                                          data=TaskData.from_dict(doc.get("data", "")),
                                          created=doc.get("created"),
                                          queued=doc.get("queued"),
@@ -271,15 +275,173 @@ class ProcessingTask:
                                                            doc.get("slurm_child_jobs", {}).items()
                                                           },
                                          exit_code=doc.get("exit_code")
-                              )
+                                        )
         return processing_task
     
     def __post_init__(
                       self
                      ) -> None:
-        self.sample, self.sample_fingerprint, self.pipeline_name, self.pipeline_version = self.task_id.split("_")
-        self.sample_id = f"{self.sample}_{self.sample_fingerprint}"
+        self.task_id = f"{self.sample_meta.sample_id}_{self.pipeline.id}"
+
+    def _prepare_data(
+                      self,
+                      script_renderer:ScriptRenderer
+                     ) -> None:
+        """
+        Использует метаданные SampleMeta и ResultMeta для подготовки данных для обработки по инструкциям, указанным в Pipeline.
+        Возвращает True, если подготовка прошла успешно, и False в противном случае.
+        """
+        def __check_n_group_input_data(
+                                       self:ProcessingTask,
+                                       script_renderer:ScriptRenderer
+                                      ) -> bool:
+            """
+            Запускает шейпер входных данных.
+            Валидирует данные и добавляет их в задание, если они валидны.
+            """
+            def __generate_start_script(nxf_cmd:str) -> Path:
+                start_script = script_renderer.render_starting_script(
+                                                                      script_filename=f"start_{self.task_id}.sh",
+                                                                      job_name=self.task_id,
+                                                                      work_dir=self.data.work_dir,
+                                                                      res_dir=self.data.result_dir,
+                                                                      log_dir=self.data.log_dir,
+                                                                      pipeline_timeout=self.pipeline.timeout,
+                                                                      nxf_command=nxf_cmd,
+                                                                      head_job_stdout=self.data.head_job_stdout,
+                                                                      head_job_stderr=self.data.head_job_stderr,
+                                                                      head_job_exitcode_f=self.data.head_job_exitcode_f,
+                                                                      environment_variables=self.pipeline.environment_variables,
+                                                                      nxf_variables=self.pipeline.nextflow_variables,
+                                                                      slurm_options=self.pipeline.slurm_options
+                                                                      )
+                return start_script
+
+            if not self.pipeline.shape_input:
+                logger.error("Не задана функция shape_input в pipeline.")
+                return False
+            try:
+                # Вызываем shape_input из pipeline
+                # Ожидается, что она вернёт команду Nextflow, путь к TSV и словарь входных данных (включает элемент {'size':int})
+                shaper_data:Tuple[
+                                  str,
+                                  Dict[
+                                       str,
+                                       Union[Set[Path], int]
+                                      ],
+                                  Dict[
+                                       str,
+                                       Dict[str,str]
+                                      ]
+                                 ] = self.pipeline.shape_input(self)
+                nxf_cmd, input_data, self.data.expected_output_data = shaper_data
+                # Проверяем валидность данных
+                if all([
+                        len(shaper_data) == 3,
+                        nxf_cmd,
+                        self.data.expected_output_data,
+                        isinstance(nxf_cmd, str),
+                        isinstance(input_data, dict),
+                        isinstance(self.data.expected_output_data, dict)
+                      ]):
+                    # Заполняем информацию о входных данных
+                    self.data.input_files_size = input_data.pop('size') # type: ignore
+                    self.data.input_data = input_data  # type: ignore
+                    if all([
+                            self.data.input_files_size > 0,
+                            self.data.input_data
+                          ]):
+                        # Генерируем старт-скрипт
+                        self.data.start_script = __generate_start_script(nxf_cmd)
+                        if self.data.start_script:
+                            return True
+                        else:
+                            logger.error("Файл скрипта не создан")
+                            return False
+                    else:
+                        logger.error("Шейпер вернул пустые входные данные.")
+                        return False
+                else:
+                    logger.error("Шейпер входных данных вернул не все данные.")
+                    return False
+                
+            except Exception as e:
+                logger.error(f"Ошибка при вызове shape_input: {e}")
+                return False            
+
+        def __form_task_directories(
+                                    self:ProcessingTask
+                                   ) -> bool:
+            pipepline_subdirs = Path(self.pipeline.name) / Path(self.pipeline.version.replace('.', ''))
+            self.data.work_dir = (self.sample_meta.processing_dir / pipepline_subdirs).resolve()
+            self.data.result_dir = (self.sample_meta.result_dir / pipepline_subdirs).resolve()
+            self.data.log_dir = (self.data.result_dir / 'logs').resolve()
+            formed_directories = [self.data.work_dir, self.data.result_dir, self.data.log_dir]
+            if not all(formed_directories):
+                logger.error(f"""Не сформированы пути директории {self.task_id}:
+                             \n\twork_dir:{self.data.work_dir.as_posix()}
+                             \n\tresult_dir:{self.data.result_dir.as_posix()}
+                             \n\tlog_dir:{self.data.log_dir.as_posix()}""".replace('  ', ''))
+                return False
+            for dir_path in formed_directories:
+                if not dir_path.exists():
+                    logger.debug(f"Директория {dir_path.as_posix()} не существует. Создание...")
+                    dir_path.mkdir(parents=True, exist_ok=True)
+                if dir_path.exists():
+                    # Проверяем, что директория доступна для записи и чтения
+                    if os_access(dir_path, W_OK & R_OK):
+                        logger.debug(f"Директория {dir_path.as_posix()} доступна для чтения и записи.")
+                    else:
+                        logger.error(f"Директория {dir_path.as_posix()} не доступна для чтения/записи.")
+                        return False
+            return True
         
+        def __form_head_job_pipe_files_paths(
+                                             self:ProcessingTask
+                                            ) -> bool:
+            """
+            Формирует пути для файлов stdout/stderr/exitcode головной задачи Slurm без их создания.
+            Возвращает True, если пути сформированы успешно, и False в противном случае.
+            """
+            try:
+                self.data.head_job_stdout = (self.data.log_dir / "slurm" / f"{self.task_id}.stdout").resolve()
+                self.data.head_job_stderr = (self.data.log_dir / "slurm" / f"{self.task_id}.stderr").resolve()
+                self.data.head_job_exitcode_f = (self.data.work_dir / f"{self.task_id}.exitcode").resolve()
+                return True
+            except Exception as e:
+                logger.error(f"Ошибка при формировании путей для файлов stdout/stderr/exitcode головной задачи Slurm для задания {self.task_id}: {e}")
+                return False
+
+        task_directories_prepared = False
+        input_data_ready_n_starting_script_created = False
+        head_job_pipe_files_paths_present = False
+        # Формируем основные собственные атрибуты
+        # Обновление меток времени
+        self.created = self.__update_time_mark()
+        # формируем пути для обработки и хранения данных
+        task_directories_prepared = __form_task_directories(self)
+        if task_directories_prepared:
+            # Формируем пути для будущих stdout/stderr/exitcode головной задачи Slurm
+            head_job_pipe_files_paths_present = __form_head_job_pipe_files_paths(self)
+            if head_job_pipe_files_paths_present:
+                # Формируем группы входных данных
+                input_data_ready_n_starting_script_created = __check_n_group_input_data(
+                                                                                        self,
+                                                                                        script_renderer
+                                                                                       )
+        # Проверяем, что все данные готовы
+        data_is_ok = all([
+                          task_directories_prepared,
+                          head_job_pipe_files_paths_present,
+                          input_data_ready_n_starting_script_created
+                         ])
+        if data_is_ok:
+            self.status = "prepared"
+            logger.debug(f"Подготовка данных задания {self.task_id} успешно завершена.")
+        else:
+            self.status = "disprepared"
+            logger.error(f"Не удалось подготовить данные задания {self.task_id}.")
+        return None
 
     def _put_in_queue(
                       self

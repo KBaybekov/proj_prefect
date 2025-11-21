@@ -233,7 +233,8 @@ class SampleMeta:
                  processing_dir:Path,
                  result_dir:Path 
                 ):
-        self.processing_dir = processing_dir
-        self.result_dir = result_dir
         self.fingerprint = generate_final_fingerprint(self._fingerprint)
-        self.sample_id = f"{self.name}_{self.fingerprint[:6]}"
+        fingerprint_short = self.fingerprint[:6]
+        self.processing_dir = (processing_dir / self.name / fingerprint_short).resolve()
+        self.result_dir = (result_dir / self.name / fingerprint_short).resolve()
+        self.sample_id = f"{self.name}_{fingerprint_short}"

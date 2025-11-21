@@ -1,6 +1,5 @@
 common:
   log: "./logs/watchdog.log"
-  slurm_template: "/path-to-slurm_template"
   # Здесь хранятся пути к файлам, использующимся в ВОТЧДОГЕ в качестве референсных 
   reference_files:
     pore_data: data/pore_data.yaml
@@ -78,6 +77,8 @@ filesystem:
   source_dir: "/common_share/github/proj_prefect/test/data/raw/"
   # директория для хранения стандартизированных ссылок на файлы
   link_dir: "/common_share/github/proj_prefect/test/data/links/"
+  result_dir: "/common_share/github/proj_prefect/test/data/result/"
+  processing_dir: "/common_share/github/proj_prefect/test/data/tmp/"
   source_files_extensions: "fast5,pod5,fastq.gz"
   # Пауза перед записью в БД в секундах (для исключения множественных обращений к БД)
   db_writing_debounce: 10
@@ -89,24 +90,21 @@ filesystem:
 # TASK SCHEDULER INFO
 scheduler:
   db_poll_interval: 10
-  result_dir: "/common_share/github/proj_prefect/test/data/result/"
-  processing_dir: "/common_share/github/proj_prefect/test/data/tmp/"
   # Директория с файлами шейперов
   shapers_dir: "/raid/kbajbekov/common_share/github/proj_prefect/data/data_shapers/"
   # Файл конфигурации организации для Nextflow
   nextflow_config: "/path-to-nextflow.config"
 
 # SCHEDULER INFO
-slurm:
   slurm:
     user: "kbajbekov"
     poll_interval: 5
     queue_size: 32
     # Узел, на котором будет запущена head-задача
     head_job_node: "vu10-2-027"
-    starting_script_template: "/path-to-slurm_template"
+    start_script_template: "/path-to-slurm_template"
 
-  # Вспомогательные файлы, необходимые для пайплайнов
+  # Вспомогательные данные, необходимые для пайплайнов
   service_data:
     reference_hg38: "hg38.fa"
     reference_hg38_t2t: "hg38_t2t.fa"
@@ -136,8 +134,10 @@ slurm:
       sorting: "SJF,input_files_size"
       # Дополнительные параметры SBATCH для запуска головного задания
       # Указываются как параметр: значение
-      # sbatch_params:
+      # slurm_options:
       #   partition: "gpu"
+      # nextflow_variables:
+      #   NXF_OFFLINE: "true"
       # Указывается время выполнения пайплайна на стандартном образце. Необходим для корректного формирования очередей. Формат: DAYS-HH:MM
       timeout: "3-00:00"
       environment_variables:
@@ -159,10 +159,13 @@ slurm:
       # Структура:
       # (обяз.) название_группы(произвольное, будет использоваться шейпером)
       # # Затем указывается список источников, от 1 штуки. В каждом источнике указываются слеедующие элементы:
-      #   (обяз.) source: название_источника (sample/result). Если указывается sample, то подразумевается, что файлы будут браться из атрибута files
+      #   (обяз.) source: название_источника (sample/result/shaper):
+      #         - Если указывается sample, то подразумевается, что файлы будут браться из атрибута files
+      #         - Если shaper, то данные появятся в результате выполнения шейпера
+      #         - Если result, то данные будут браться из атрибута result (обязателен пункт attributes)
       #   (опц.) attributes: нитка атрибутов из источника, по которым нужно вести поиск (например, outputs.data.ubam)
       #   (обяз.) file_mask: список масок, по которым будут искаться файлы. Все файлы, найденные по указанным маскам, будут добавлены в указанную группу!
-      #   (опц.) requirements: список требований к файлам. Возможные требования: exists, not_empty, realpath, size_gte, size_lte, is_dir, is_file, is_symlink
+      #   (опц.) requirements: список требований к файлам. Возможные требования: not_empty, realpath, size_gte, size_lte, is_dir, is_file, is_symlink.  
       #   (обяз.) condition: тип условия наличия данных этой группы.
       #        Возможные значения:
       #           required (данные необходимы для обработки)
@@ -174,10 +177,21 @@ slurm:
               - "*.fast5"
               - "*.pod5"
             requirements:
-              - exists
+              - is_file
               - not_empty
               - realpath
             condition: "required"
+        nxf_samplesheet:
+          - source: shaper
+            file_mask: 
+              - "*.tsv"
+              - "*.csv"
+            requirements:
+              - is_file
+              - realpath
+              - size_gte 5
+            condition: "required"
+
       # словарь вида {тип_файлов: маска}
       expected_output_data:
         data:

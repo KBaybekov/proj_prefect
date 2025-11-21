@@ -6,9 +6,10 @@ from utils.db.db import ConfigurableMongoDAO
 from utils.logger import get_logger
 from pathlib import Path
 from .slurm_manager import SlurmManager
-from utils.filesystem.metas import SampleMeta
+from scheduler import *
 from classes.pipeline import Pipeline
 from classes.processing_task import ProcessingTask
+from tools.script_renderer import ScriptRenderer
 import subprocess
 
 
@@ -20,8 +21,10 @@ class TaskScheduler:
     _cfg:Dict[str, Any]
     dao:ConfigurableMongoDAO
     poll_interval:int = field(default=30)
+    script_renderer:Optional[ScriptRenderer] = field(default=None)
     slurm_manager:Optional[SlurmManager] = field(default=None)
     pipelines: Dict[str, Pipeline] = field(default_factory=dict)
+    # словарь созданных задач {task_id: ProcessingTask}
     created_tasks: Dict[str, ProcessingTask] = field(default_factory=dict)
     # словарь запущенных задач {task_id: ProcessingTask}
     queued_tasks: Dict[str, ProcessingTask] = field(default_factory=dict)
@@ -31,23 +34,14 @@ class TaskScheduler:
     def init_scheduler(
                        self
                       ) -> None:
-        def __check_for_task_submission(pipeline_name: str, sample: str) -> dict:
-            found_task = self.dao.find_one(
-                                 collection="tasks",
-                                 query={"pipeline": pipeline_name, "sample": sample}
-                                )
-            if found_task:
-                logger.debug(f"Пайплайн {pipeline_name} для образца {sample} уже запущен.")
-                return found_task
-            logger.debug(f"Пайплайн {pipeline_name} для образца {sample} ранее запущен не был.")
-            return {}
-        
+        # Инициализация загрузчика скриптов
+        self.script_renderer = ScriptRenderer(starting_script_template=Path(self._cfg.get('start_script_template', '')))
         # Загрузка конфигурации пайплайнов
         self._load_pipelines()
         # Загрузка менеджера Slurm
         self._create_slurm_manager()
         # Актуализация информации о запущенных заданиях
-        self._actualize_queued_tasks_data()
+        self._actualize_tasks_data()
         # Формирование заданий на обработку
         self._create_new_tasks()
         # Постановка заданий в очередь Slurm
@@ -69,7 +63,8 @@ class TaskScheduler:
                                                _cfg=pipeline_data,
                                                _shaper_dir=Path(self._cfg['shaper_dir']),
                                                id=pipeline_id,
-                                               nextflow_config=self._cfg.get('nextflow_config', '')
+                                               nextflow_config=self._cfg.get('nextflow_config', ''),
+                                               service_data=self._cfg.get('service_data', {})
                                               )
                           for pipeline_id, pipeline_data in self._cfg['pipelines'].items()
                          }
@@ -92,89 +87,23 @@ class TaskScheduler:
         logger.info("Менеджер Slurm инициализирован.")
         return None
 
-    def _create_new_tasks(
-                          self
-                         ) -> None:
-        """
-        Создание новых задач на обработку из данных БД и данных класса.
-        """
-        # Формирование списка образцов, подходящих для обработки, для каждого пайплайна
-        for pipeline_name, pipeline in self.pipelines.items():
-            logger.debug(f"Пайплайн {pipeline_name}:")
-            # запрашиваем данные образцов, подходящих для обработки, включая имя и список запущенных задач
-            # включаем образцы, отвечающие заданным условиям
-            # исключаем образцы, у которых в tasks уже есть этот пайплайн
-            pipeline.compatible_samples = self.dao.find(
-                                                        collection="samples",
-                                                        query={'status':'indexed',
-                                                               f'tasks.{pipeline.id}':{'$exists':False},
-                                                               **{condition['field']: {f"${condition['type']}":condition['value']}
-                                                                                       for condition in pipeline.conditions}
-                                                              },
-                                                        projection={
-                                                                    "name":1,
-                                                                    "fingerprint":1,
-                                                                    "tasks":1
-                                                                   }                
-                                                       )
-            # Если есть образцы, подходящие для обработки, проверяем, не было ли ранее создано задание на обработку
-            # Иначе - создаём его
-            if pipeline.compatible_samples:
-                for sample in pipeline.compatible_samples:
-                    # Формируем имя задачи
-                    task_id = self._create_task_id(sample, pipeline)
-                    # Проверяем на всякий случай, была ли задача запущена ранее, но не отмечена в sample.tasks
-                    if self._task_exists(task_id):
-                        self._add_task_to_sample_tasklist(sample, pipeline)
-                        continue
-                    else:
-                        self._create_task(
-                                          task_id,
-                                          sample,
-                                          pipeline    
-                                         )
-                        
-    def _create_task(
-                     self,
-                     task_id:str,
-                     sample:dict,
-                     pipeline:Pipeline
-                    ) -> Optional[ProcessingTask]:
-        """
-        Формирует задание на обработку
-        """
-        logger.debug(f"Создание задания {task_id}")
-        # Запрашиваем данные образца из БД
-        sample_db_data = self.dao.find_one(
-                                           collection='samples',
-                                           query={
-                                                  'name': sample['name'],
-                                                  'fingerprint': sample['fingerprint']
-                                                 },
-                                           projection={}
-                                          )
-        if sample_db_data:
-            sample_meta = SampleMeta.from_db(sample_db_data)
-            
-        else:
-            logger.error(f"Не удалось найти образец {sample['name']} с отпечатком {sample['fingerprint']} в БД.")
-
-                        
-
-
-    def _actualize_queued_tasks_data(
+    def _actualize_tasks_data(
                                      self
                                     ) -> None:
         """
-        Выгружает из БД список задач, запущенных ранее в обработку.
+        Выгружает из БД список созданных ранее задач, в т.ч. запущенных в обработку.
         Собирает данные о запущенных заданиях из Slurm.
         Актуализирует данные заданий.
         Загружает обновленные данные в БД.
         """
-        unqueued_tasks:List[str] = []
+        # Обновляем информацию по созданным, но не запущенным заданиям
+        logger.debug("Актуализация данных о созданных заданиях...")
+        self.created_tasks.update(self._get_tasks_from_db(statuses=["prepared"]))
+        # Обновляем информацию по запущенным заданиям
         logger.debug("Актуализация данных о запущенных заданиях...")
+        unqueued_tasks:List[str] = []
         # Выгрузка из БД запущенных задач
-        self._get_queued_tasks_from_db()
+        self.queued_tasks.update(self._get_tasks_from_db(statuses=["queued","running"]))
         # Обновление данных о запущенных заданиях с помощью Slurm
         if self.slurm_manager:
             self.slurm_manager._get_queued_tasks_data()
@@ -201,28 +130,28 @@ class TaskScheduler:
             self._remove_task_from_queued_in_TaskScheduler(task_id)
         return None
 
-    def _get_queued_tasks_from_db(
-                                  self
-                                 ) -> None:
+    def _get_tasks_from_db(
+                           self,
+                           statuses: list
+                          ) -> Dict[str, ProcessingTask]:
         """
         Выгружает из БД список задач, запущенных ранее в обработку.
         Возвращает словарь {job_id: ProcessingTask}, сохраняя его в self.queued_tasks.
         """
         dao_request = self.dao.find(
                                     collection="tasks",
-                                    query={'status': {"$in":["queued","running"]}},
+                                    query={'status': {"$in":["queued","processing"]}},
                                     projection={}
                                    )
         if dao_request:
-            logger.debug(f"Выгружено поставленных в очередь задач из БД: {len(dao_request)}")
+            logger.debug(f"Выгружено задач из БД: {len(dao_request)}")
         else:
             logger.debug("Выгружено поставленных в очередь задач из БД: 0")
-
-        self.queued_tasks = {
-                             task_data['task_id']:ProcessingTask.from_dict(task_data)
-                             for task_data in dao_request
-                            }
-        return None
+        tasks = {
+                 task_data['task_id']:ProcessingTask.from_dict(task_data)
+                 for task_data in dao_request
+                }
+        return tasks
 
     def _add_task_to_db_uploading(
                                   self,
@@ -233,6 +162,7 @@ class TaskScheduler:
         """
         collection = "tasks"
         self.data_to_db[collection][task.task_id] = task
+        logger.debug(f"Задание {task.task_id} добавлено в список на выгрузку в БД.")
         return None
 
     def _remove_task_from_queued_in_TaskScheduler(
@@ -243,20 +173,101 @@ class TaskScheduler:
             del self.queued_tasks[task_id]
             logger.debug(f"Задание {task_id} удалено из списка поставленных в очередь.")
 
-    def _create_task_id(
-                        self,
-                        sample: Dict[str, Any],
-                        pipeline:Pipeline
-                       ) -> str:
-        return f"{sample['sample']}_{sample['fingerprint']}_{pipeline.name}_{pipeline.version}"    
-        
-
-    def _task_exists(
+    def _create_new_tasks(
+                          self
+                         ) -> None:
+        """
+        Создание новых задач на обработку из данных БД и данных класса.
+        """
+        # Формирование списка образцов, подходящих для обработки, для каждого пайплайна
+        for pipeline_name, pipeline in self.pipelines.items():
+            logger.debug(f"Пайплайн {pipeline_name}:")
+            # запрашиваем данные образцов, подходящих для обработки, включая имя и список запущенных задач
+            # включаем образцы, отвечающие заданным условиям
+            # исключаем образцы, у которых в tasks уже есть этот пайплайн
+            pipeline.compatible_samples = self.dao.find(
+                                                        collection="samples",
+                                                        query={'status':'indexed',
+                                                               f'tasks.{pipeline.id}':{'$exists':False},
+                                                               **{condition['field']: {f"${condition['type']}":condition['value']}
+                                                                                       for condition in pipeline.conditions}
+                                                              },
+                                                        projection={"sample_id":1}                
+                                                       )
+            # Создаём задания на обработку
+            if pipeline.compatible_samples:
+                for sample in pipeline.compatible_samples:
+                    self._create_task(
+                                      sample['sample_id'],
+                                      pipeline    
+                                     )
+        return None
+               
+    def _create_task(
                      self,
-                     task_id: str
-                    ) -> bool:
-        return task_id in self.submitted_tasks
+                     sample_id:str,
+                     pipeline:Pipeline
+                    ) -> Optional[ProcessingTask]:
+        """
+        Формирует задание на обработку
+        """
+        logger.debug(f"Создание задания обработки образца {sample_id} пайплайном {pipeline.id}")
+        # Вытягиваем меты образца и его результатов. Создаём объект задания
+        sample_meta:SampleMeta = self._get_obj_meta(sample_id, 'sample') # type: ignore
+        result_meta:ResultMeta = self._get_obj_meta(sample_id, 'result') # type: ignore
+        if all([sample_meta, result_meta]):
+            task = ProcessingTask(
+                                  sample_meta=sample_meta,
+                                  result_meta=result_meta,
+                                  pipeline=pipeline
+                                 )
+            logger.debug(f"Задание {task.task_id} инициализировано, подготовка данных...")
+            # Генерируем данные для задания
+            if self.script_renderer:
+                task._prepare_data(self.script_renderer)
+                if task.status == 'prepared':
+                    logger.debug(f"Задание {task.task_id} подготовлено.")
+                    # Добавляем задание в список созданных
+                    self.created_tasks[task.task_id] = task
+                else:
+                    logger.error(f"Не удалось подготовить данные задания {task.task_id}: проблемы при создании")
+            else:
+                logger.error(f"Не удалось подготовить данные задания {task.task_id}: ScriptRenderer отсутствует")
+        logger.error(f"Не удалось создать задание обработки образца {sample_id} пайплайном {pipeline.id}: недостаточно метаданных")
+        return None        
 
+    def _get_obj_meta(
+                      self,
+                      sample_id:str,
+                      obj_type:str
+                     ) -> Optional[ResultMeta|SampleMeta]:
+        """
+        Выгружает метаданные образца из БД. В случае отсутствия - логгирует ошибку.
+        """
+        meta = None
+        logger.debug(f"Получение метаданных типа '{obj_type}' для образца {sample_id} из БД...")
+        doc = self.dao.find_one(f'{obj_type}s', {'sample_id': sample_id})
+        if doc:
+            if obj_type == 'sample':
+                meta = SampleMeta.from_db(doc)
+            elif obj_type == 'result':
+                meta = ResultMeta.from_db(doc)
+            logger.debug(f"Метаданные '{obj_type}' для {sample_id} получены.")
+        else:
+            logger.error(f"Не удалось получить метаданные '{obj_type}' образца {sample_id} из БД.")
+        return meta
+
+    def _put_tasks_in_queue(
+                            self
+                           ) -> None:
+        """
+        Проверяет очередь Slurm на возможность запуска новых заданий.
+        Сортирует ранее созданные задания в зависимости от:
+        - типа сортировки, указанного в пайплайне (SJF, LJF);
+        - максимальной длительности задания;
+        - размера входных данных.
+        Добавляет задания в очередь Slurm в порядке, определённом сортировкой.
+        """
 
    
     def _task_completion_check(

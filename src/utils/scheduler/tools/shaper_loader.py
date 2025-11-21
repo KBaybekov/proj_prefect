@@ -3,9 +3,9 @@
 Модуль для загрузки функций из data_shaper_*.py
 """
 from __future__ import annotations
-
+from classes.processing_task import ProcessingTask 
 from pathlib import Path
-from typing import Callable, Tuple, Any, Dict
+from typing import Callable, Tuple, Any, Dict, Set
 import importlib.util
 import sys
 from utils.logger import get_logger
@@ -15,11 +15,18 @@ logger = get_logger(__name__)
 
 # Типы для аннотаций
 
-# На вход подаются: мета образца, мета результатов образца, шаблон команды Nextflow, задание, сервисные данные
-# На выходе - CLI команда Nextflow, путь к TSV с входными данными
+# На вход подаются: мета задания
+# На выходе:
+#       CLI команда Nextflow;
+#       все входные данные, распределённые по группам (есть отдельный ключ "size" с общим размером данных);
+#       Группы ожидаемых выходных данных {группа_файлов:{тип_файлов:маска_файлов}}
 IDataFunc = Callable[
-                     [str, Any, Dict[str, Any]],
-                     Tuple[str, Path]
+                     [ProcessingTask],
+                     Tuple[
+                           str,
+                           Dict[str, Set[Path]],
+                           Dict[str, Dict[str,str]]
+                          ]
                     ]
 # на вход подаются: папка результатов, папка с QC, папка с логами
 # На выходе - словарь вида {коллекция: {вид данных: данные}}
