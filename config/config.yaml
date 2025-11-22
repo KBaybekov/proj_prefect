@@ -11,6 +11,8 @@ database:
   user: "guest"
   password: "guest"
   timeout: "100"
+  # Префикс для коллекций в БД
+  collection_prefix: "test_"
   # Конфиг БД для DAO: коллекции и их индексы.
   # Направления: ASC/DESC. Доп. опции (unique/sparse/partialFilterExpression) — по месту.
   collections:
