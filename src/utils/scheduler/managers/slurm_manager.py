@@ -46,11 +46,16 @@ class SlurmManager:
         return
 
     def _check_slurm_presence(self) -> None:
-        if self._run_subprocess(["which", "sbatch"]).returncode == 0:
-            logger.debug("Slurm доступен.")
-        else:
-            logger.error("Slurm не доступен.", )
-            raise Exception("Slurm не доступен.")
+        """
+        Проверяет доступность Slurm.
+        """
+        result =  self._run_subprocess(["which", "sbatch"])
+        if result:
+            if result.returncode == 0:
+                logger.debug("Slurm доступен.")
+                return None
+        logger.error("Slurm не доступен.", )
+        raise Exception("Slurm не доступен.")
     
     def _get_queued_tasks_data(
                                self
@@ -77,18 +82,19 @@ class SlurmManager:
                                           timeout=15,
                                           critical=True
                                          )
-        rc, out = cmd_result.returncode, cmd_result.stdout
-        if rc != 0:
-            logger.error(f"Ошибка при запросе данных о задачах Slurm: exit_code {rc}")
-            return None
-        # Преобразуем json-строку в словарь
-        try:
-            j = json_loads(out)
-        except Exception as e:
-            logger.error("Ошибка при преобразовании stdout squeue в json:", e)
-            return None
+        if cmd_result:
+            rc, out = cmd_result.returncode, cmd_result.stdout
+            if rc != 0:
+                logger.error(f"Ошибка при запросе данных о задачах Slurm: exit_code {rc}")
+                return None
+            # Преобразуем json-строку в словарь
+            try:
+                j = json_loads(out)
+            except Exception as e:
+                logger.error("Ошибка при преобразовании stdout squeue в json:", e)
+                return None
         # Проверяем наличие ключа "jobs", и если он есть, извлекаем его в виде списка
-        jobs:List[Dict[Union[int, str], Any]] = j.get("jobs") or []
+        jobs:List[Dict[Union[int, str], Any]] = j.get("jobs") or [] # type: ignore
         # Проходим по всем задачам, извлекая нужные поля
         for job in jobs:
             job_id = job.get('job_id') 
@@ -141,6 +147,16 @@ class SlurmManager:
                          task:ProcessingTask
                         ) -> None:
         """Отправляет задание в Slurm"""
+        def create_necessary_dirs():
+            # Создание необходимых директорий
+            for dir_path in [
+                             task.data.work_dir,
+                             (task.data.log_dir / 'slurm').resolve()
+                            ]:
+                if not dir_path.exists():
+                    logger.debug(f"Создание директории {dir_path.as_posix()}")
+                    dir_path.mkdir(parents=True, exist_ok=True)
+
         def extract_slurm_job_id(stdout: str) -> int:
             """
             Извлекает Slurm ID задачи из stdout
@@ -166,6 +182,7 @@ class SlurmManager:
                       task.data.start_script.as_posix()  
                      ]
         try:
+            create_necessary_dirs()
             result = self._run_subprocess(
                                           cmd=sbatch_cmd,
                                           check=True,
@@ -175,14 +192,15 @@ class SlurmManager:
                 if result.returncode == 0:
                     job_id = extract_slurm_job_id(result.stdout)
                     if job_id:
-                        task.slurm_main_job = TaskSlurmJob(job_id)
+                        task._now_in_queue(job_id)
                         logger.info(f"Задание {task.task_id} отправлено в Slurm с ID {job_id}.")
                         return None
                 else:
                     logger.error(f"Ошибка при отправке задания {task.task_id} в Slurm: {result.stderr}")
         except subprocess.CalledProcessError as e:
             logger.error(f"Ошибка при отправке задания в Slurm: {e}")
-            raise
+        task.status = 'failed'
+        return None
 
     def _get_job_info(self, job_id: str) -> Optional[Dict[str, Any]]:
         """Получает информацию о задании из Slurm."""
@@ -193,45 +211,20 @@ class SlurmManager:
                 text=True,
                 check=True
             )
-            lines = result.stdout.strip().split("\n")[1:]  # Пропускаем заголовок
-            for line in lines:
-                parts = line.split()
-                if parts[0] == job_id:
-                    return {
-                        "job_id": job_id,
-                        "state": parts[1],
-                        "exit_code": parts[2] if len(parts) > 2 else None
-                    }
-            return None
+            if result:
+                lines = result.stdout.strip().split("\n")[1:]  # Пропускаем заголовок
+                for line in lines:
+                    parts = line.split()
+                    if parts[0] == job_id:
+                        return {
+                            "job_id": job_id,
+                            "state": parts[1],
+                            "exit_code": parts[2] if len(parts) > 2 else None
+                        }
+                return None
         except subprocess.CalledProcessError as e:
             logger.error(f"Ошибка при получении информации о задании {job_id}: {e}")
             return None
-
-    def monitor_job(self, job_id: str, task_doc: Dict[str, Any]) -> None:
-        """Мониторит статус задания и обновляет данные в БД."""
-        while True:
-            job_info = self.get_job_info(job_id)
-            if not job_info:
-                logger.warning(f"Задание {job_id} не найдено в Slurm.")
-                self.handle_missing_job(task_doc)
-                break
-            elif job_info["state"] == "COMPLETED":
-                self.update_task_status(job_id, "COMPLETED", None)
-                break
-            elif job_info["state"] == "FAILED":
-                self.update_task_status(job_id, "FAILED", job_info["exit_code"])
-                self.retry_or_notify(task_doc)
-                break
-            time.sleep(60)
-
-    def handle_missing_job(self, task_doc: Dict[str, Any]) -> None:
-        """Обрабатывает задачу, которая исчезла из Slurm."""
-        if self.check_output_files(task_doc):
-            logger.info(f"Задание {task_doc['job_id']} завершена успешно (проверка файлов).")
-            self.update_task_status(task_doc["job_id"], "COMPLETED", None)
-        else:
-            logger.warning(f"Задание {task_doc['job_id']} не найдена и файлы отсутствуют.")
-            self.update_task_status(task_doc["job_id"], "FAILED", "MissingOutputFiles")
 
     def _run_subprocess(
                        self,

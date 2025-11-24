@@ -313,7 +313,8 @@ class FsCrawler():
         def __check_new_data2fs():
             if any([getattr(self, collection) for collection in self.db_collections4storing.keys()]):
                 self._fs_changes2db(stage='monitoring')
-            self.timers['db_update_timer'].start() # type: ignore
+            if self.timers['db_update_timer']:
+                self.timers['db_update_timer'].start()
         self.timers['db_update_timer'] = Timer(self.db_update_interval, __check_new_data2fs)
         self.timers['db_update_timer'].start()
         

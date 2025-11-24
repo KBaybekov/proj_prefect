@@ -1,5 +1,6 @@
 from typing import Any, Dict, List, Optional, Set
 from prefect import flow, task
+from threading import Timer
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from utils.db.db import ConfigurableMongoDAO
@@ -35,8 +36,13 @@ class TaskScheduler:
     queued_tasks_sjf: Dict[str, ProcessingTask] = field(default_factory=dict)
     # словарь запущенных задач, отсортированных по алгоритму Longest Job First
     queued_tasks_ljf: Dict[str, ProcessingTask] = field(default_factory=dict)
+    results2db:Dict[str, Dict[str, Any]] = field(default_factory=dict)
     # словарь данных для идёмпотентной загрузки в БД вида {collection: {doc_id: doc_data}
-    data_to_db:Dict[str, Dict[str, Any]] = field(default_factory=dict)
+    tasks2db:Dict[str, ProcessingTask] = field(default_factory=dict)
+    timers:Dict[str, Optional[Timer]] = field(default={
+                                                       "slurm_poll": None,
+                                                       "db_update_timer": None
+                                                      })
     
     def init_scheduler(
                        self
@@ -53,6 +59,8 @@ class TaskScheduler:
         self._create_new_tasks()
         # Постановка заданий в очередь Slurm
         self._put_tasks_in_queue()
+        # Выгружаем данные в БД, если таковые имеются
+        self._upload_data_to_db()
         # Удаляем конфиг для экономии памяти
         self._cfg.clear()
         return None
@@ -125,6 +133,10 @@ class TaskScheduler:
                         logger.debug(f"Данные задания {task_id} не получены из Slurm.")
                         logger.debug(f"Задание {task_id} помечено как завершённое.")
                         task._complete()
+                        if task.status == 'completed':
+                             self.data2db['results'].update({
+                                        task.sample_meta.sample_id:task.data.output_data
+                                        })
                         unqueued_tasks.append(task)
                 self._add_task_to_db_uploading(task)
 
@@ -163,8 +175,7 @@ class TaskScheduler:
         """
         Добавляет задание в список на выгрузку в БД.
         """
-        collection = "tasks"
-        self.data_to_db[collection][task.task_id] = task
+        self.data2db["tasks"][task.task_id] = task
         logger.debug(f"Задание {task.task_id} добавлено в список на выгрузку в БД.")
         return None
 
@@ -339,165 +350,44 @@ class TaskScheduler:
 
         return None
 
-
-   
-    def _task_completion_check(
-                               self,
-                               task_record:SlurmTask
-                              ) -> None:
-         task_record.slurm_status == 'ok',
-                task_record.nextflow_status == 'ok'
-               ]):
-            if all(val==True for val in task_record.output_files_status.values()):
-
-    def _extract_task_results(task: SlurmTask) -> None:
-    
-
-    def _check_pipeline_requirements(self, sample: str, pipeline_name: str) -> bool:
-        """Проверяет, удовлетворяет ли образец требованиям пайплайна."""
-        pipeline = self.pipeline_config.get(pipeline_name)
-        if not pipeline:
-            logger.error(f"Пайплайн {pipeline_name} не найден в конфигурации.")
-            return False
-
-        sample_data = self.dao.find_one("samples", {"sample": sample})
-        if not sample_data:
-            logger.warning(f"Данные для образца {sample} не найдены.")
-            return False
-
-        for condition in pipeline.get("conditions", []):
-            field = condition["field"]
-            op = condition["type"]
-            value = condition["value"]
-
-            # Получение вложенного значения
-            current_value = self._get_nested_value(sample_data, field)
-
-            # Логика проверки
-            if op == "eq":
-                if current_value != value:
-                    logger.debug(f"Условие {field} == {value} не выполнено.")
-                    return False
-            elif op == "ne":
-                if isinstance(value, list):
-                    if current_value in value:
-                        logger.debug(f"Условие {field} ∉ {value} не выполнено.")
-                        return False
-                else:
-                    if current_value == value:
-                        logger.debug(f"Условие {field} != {value} не выполнено.")
-                        return False
-            elif op == "gte":
-                if not isinstance(current_value, (int, float)) or current_value < value:
-                    logger.debug(f"Условие {field} ≥ {value} не выполнено.")
-                    return False
-            # Добавьте остальные операторы аналогично
-            elif op == "exists":
-                if current_value is None:
-                    logger.debug(f"Поле {field} отсутствует.")
-                    return False
-            # ...
-
-        return True
-    
-    def _get_nested_value(self, data: dict, field: str):
-        """Извлекает вложенное значение из словаря по пути, указанному в field."""
-        if not isinstance(data, dict) or not field:
-            return None
-
-        parts = field.split('.')
-        current = data
-        for part in parts:
-            if isinstance(current, dict) and part in current:
-                current = current[part]
-            else:
-                return None  # Путь недоступен
-        return current
-
-    def _generate_job_script(self, sample: str, pipeline_name: str, resources: Dict[str, Any]) -> str:
-        """Генерирует bash-скрипт для Slurm."""
-        script_path = Path("/tmp") / f"{pipeline_name}_{sample}.sh"
-        with open(script_path, "w") as f:
-            f.write("#!/bin/bash\n")
-            for key, value in resources.items():
-                f.write(f"#SBATCH --{key}={value}\n")
-            f.write(f"cd {Path(__file__).parent.parent.parent}\n")
-            f.write(f"./scripts/run_pipeline.sh {pipeline_name} {sample}\n")
-        os.chmod(script_path, 0o755)
-        return str(script_path)
-
     @task
-    def start_scheduler(self) -> None:
-        """Основной цикл планировщика задач."""
-        while True:
-            try:
-                samples = self.dao.find("samples", {"status": "ready"})
-                for sample in samples:
-                    for pipeline_name in self.pipeline_config:
-                        if self._check_pipeline_requirements(sample["sample"], pipeline_name):
-                            self._submit_task(sample["sample"], pipeline_name)
-                time.sleep(self.poll_interval)
-            except Exception as e:
-                logger.error(f"Ошибка в планировщике задач: {e}", exc_info=True)
-                time.sleep(10)
+    def start_scheduler(
+                        self
+                       ) -> None:
+        """
+        Запускает периодическую проверку изменений в выполнении заданий.
+        """
+        # Переходим в режим мониторинга: периодически проверяем коллекции с данными на загрузку в БД на предмет... данных
+        logger.info("Запуск мониторинга обработки данных...")
+        self._monitor_scheduler()
 
-    def _submit_task(self, sample: str, pipeline_name: str) -> None:
-        """Формирует и отправляет задание в очередь Slurm."""
-        pipeline = self.pipeline_config[pipeline_name]
-        
-        # Подготовка контекста (переменные для шаблона)
-        context = {
-            "input_dir": self._get_nested_value(sample_data, "input_dir"),
-            "output_dir": self._get_nested_value(sample_data, "output_dir"),
-            "threads": pipeline["resources"].get("cpus-per-task", 4),
-            "sample": sample,
-        }
+    def _monitor_scheduler(
+                           self
+                          ) -> None:
+        def __check_new_data2fs():
+            self._upload_data_to_db()
+            if self.timers['db_update_timer']:
+                self.timers['db_update_timer'].start()
+        self.timers['db_update_timer'] = Timer(self.poll_interval, __check_new_data2fs)
+        self.timers['db_update_timer'].start()
 
-        # Рендеринг команды через Jinja2
-        template = Template(pipeline["command_template"])
-        rendered_command = template.render(context)
+    def _upload_data_to_db(self) -> None:
+        """
+        Выгружает накопленные изменения задач и результаты в БД.
+        """
+        def upload_data(
+                        collection:str,) -> None:
+            
+        # Выгружаем в БД задания
+        docs = [task.to_dict() for task in self.tasks2db.values()]
+        try:
+            self.dao.upsert_many(
+                collection="tasks",
+                key="task_id",
+                docs=docs
+            )
+            logger.debug(f"Выгружено {len(docs)} задач в БД.")
+            self.data_to_db["tasks"].clear()
+        except Exception as e:
+            logger.error(f"Ошибка при выгрузке задач в БД: {e}")
 
-        # Генерация bash-скрипта
-        job_script = self._generate_job_script(rendered_command)
-        
-        # Отправка в Slurm
-        job_id = self.slurm_manager.submit_to_slurm(job_script, f"{pipeline_name}_{sample}", pipeline["resources"])
-        
-        # Сохранение в БД
-        task_collection.insert_one({
-            "sample": sample,
-            "pipeline": pipeline_name,
-            "job_id": job_id,
-            "status": "submitted",
-            "created_at": datetime.now(timezone.utc),
-            "output_files": pipeline["output_files"]
-        })
-
-    def check_output_files(self, task_doc: Dict[str, Any]) -> bool:
-        """Проверяет наличие выходных файлов для задачи."""
-        expected_files = task_doc.get("output_files", [])
-        for file_path in expected_files:
-            if not os.path.exists(file_path):
-                return False
-        return True
-
-    def update_task_status(self, job_id: str, state: str, exit_code: Optional[str]) -> None:
-        """Обновляет статус задачи в БД."""
-        update_data = {"last_checked": datetime.now(timezone.utc)}
-        
-        if state == "COMPLETED":
-            update_data["status"] = "ok"
-        elif state == "FAILED":
-            update_data["status"] = "fail"
-            update_data["error_details"] = {"exit_code": exit_code}
-        elif state == "RUNNING":
-            update_data["status"] = "processing"
-        else:
-            update_data["status"] = "unknown"
-
-        self.dao.update_one({"job_id": job_id}, {"$set": update_data})
-
-    def retry_or_notify(self, task_doc: Dict[str, Any]) -> None:
-        """Перезапускает задачу или отправляет уведомление об ошибке."""
-        # Логика перезапуска или оповещения
-        pass

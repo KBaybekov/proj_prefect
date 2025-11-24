@@ -87,6 +87,7 @@ class TaskSlurmJob:
             now = datetime.now(timezone.utc)
         self.finish = now
         self._collect_completed_process_data(exit_code_f)
+        return None
 
     def _collect_completed_process_data(
                                         self,
@@ -109,7 +110,7 @@ class TaskSlurmJob:
             else:
                 logger.error(f"Не найден .exitcode в {self.work_dir.as_posix()}")
             
-            self._define_task_status_by_exit_code()
+        self._define_task_status_by_exit_code()
         return None
 
     def _define_task_status_by_exit_code(
@@ -278,6 +279,8 @@ class ProcessingTask:
                                                },
                               exit_code=doc.get("exit_code")
                              )
+    
+    def to_dict(self) -> Dict[str, Any]:
     
     def __post_init__(
                       self
@@ -449,8 +452,9 @@ class ProcessingTask:
             logger.error(f"Не удалось подготовить данные задания {self.task_id}.")
         return None
 
-    def _put_in_queue(
-                      self
+    def _now_in_queue(
+                      self,
+                      job_id:int
                      ) -> None:
         """
         Перевод задания в состояние поставленного в очередь.
@@ -460,16 +464,8 @@ class ProcessingTask:
         self.queued = now
         self.time_in_processing = "00:00:00"
         self.status = "queued"
-        # Создание необходимых директорий
-        for dir_path in [
-                         self.data.work_dir,
-                         (self.data.log_dir / 'slurm').resolve()
-                        ]:
-            if not dir_path.exists():
-                logger.debug(f"Создание директории {dir_path.as_posix()}")
-                dir_path.mkdir(parents=True, exist_ok=True)
-
-        self.slurm_main_job = TaskSlurmJob()
+        self.slurm_main_job = TaskSlurmJob(job_id)
+        return None
 
     def _update(
                 self,
@@ -501,6 +497,7 @@ class ProcessingTask:
                  ) -> None:
         """
         Перевод задания в состояние завершённого.
+        Обновление статуса в соответствии со статусом главной задачи Slurm.
         Сбор информации о выходных файлах.
         """
         # Обновление меток времени
@@ -511,7 +508,7 @@ class ProcessingTask:
                                           now,
                                           self.data.head_job_exitcode_f
                                          )
-
+            self.status = 'completed' if self.slurm_main_job.status == 'completed' else 'failed'
         # Поиск выходных файлов в папке результата
         self.data._check_output_files()        
         return None
