@@ -96,15 +96,19 @@ scheduler:
   shapers_dir: "/raid/kbajbekov/common_share/github/proj_prefect/data/data_shapers/"
   # Файл конфигурации организации для Nextflow
   nextflow_config: "/path-to-nextflow.config"
+  # Шаблон для запуска SBATCH-скрипта
+  start_script_template: "/path-to-slurm_template"
+  # Узел, на котором будет запущена head-задача
+  head_job_node: "vu10-2-027"
 
-# SCHEDULER INFO
   slurm:
     user: "kbajbekov"
     poll_interval: 5
-    queue_size: 32
-    # Узел, на котором будет запущена head-задача
-    head_job_node: "vu10-2-027"
-    start_script_template: "/path-to-slurm_template"
+    # Размеры очередей для задач с разными типами сортировки. Сумма очередей должна быть равна main_queue_size!
+    # Задачи, попадающие в SJF-очередь, будут выполняться последовательно
+    sjf_queue_size: 2
+    # Задачи, попадающие в LJF-очередь, будут выполняться параллельно
+    ljf_queue_size: 14
 
   # Вспомогательные данные, необходимые для пайплайнов
   service_data:
@@ -133,7 +137,7 @@ scheduler:
         #      - type: exists   # Проверка наличия поля
         #        field: sample_id
       # Тип сортировки и показатель, по которому будет производиться сортировка
-      sorting: "SJF,input_files_size"
+      sorting: "SJF"
       # Дополнительные параметры SBATCH для запуска головного задания
       # Указываются как параметр: значение
       # slurm_options:

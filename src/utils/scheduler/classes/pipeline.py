@@ -16,8 +16,7 @@ class Pipeline:
     shape_input:Optional[Callable] = field(default=None)
     shape_output:Optional[Callable] = field(default=None)
     conditions:List[Dict[str, Any]] = field(default_factory=list)
-    sorting_type:str = field(default_factory=str)
-    sorting_indicator:str = field(default_factory=str)
+    sorting:str = field(default_factory=str)
     timeout:str = field(default_factory=str)
     environment_variables:Dict[str, str] = field(default_factory=dict)
     nextflow_variables:Dict[str, str] = field(default_factory=dict)
@@ -41,14 +40,21 @@ class Pipeline:
                             'value':condition.get('value')
                            } for condition in self._cfg.get('conditions', [])
                           ]
-        sort_data = self._cfg.get('sorting')
-        if sort_data:
-            self.sorting_type, self.sorting_indicator = sort_data.split(',')
+        self.sorting = self._cfg.get('sorting', "")
         self.timeout = self._cfg.get('timeout', "00:00")
         self.environment_variables = self._cfg.get('environment_variables', {})
         self.slurm_options = self._cfg.get('slurm_options', {})
         self.nextflow_variables = self._cfg.get('nextflow_variables', {})
         self.cmd_template = self._cfg.get('command_template', "")
         self.output_files_expected = self._cfg.get('output_files_expected', {})
-        # Удаляем конфиг для экономии памяти
-        self._cfg.clear()
+
+    @staticmethod
+    def from_dict(doc:Dict[str, Any]) -> 'Pipeline':
+        pipeline = Pipeline(
+                            _cfg=doc.get('_cfg', {}),
+                            _shaper_dir=doc.get('_shaper_dir', Path()),
+                            id=doc.get('id', ""),
+                            nextflow_config=doc.get('nextflow_config', Path()),
+                            service_data=doc.get('service_data', {})
+                           )
+        return pipeline

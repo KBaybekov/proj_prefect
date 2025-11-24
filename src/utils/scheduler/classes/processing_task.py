@@ -16,17 +16,17 @@ logger = get_logger(__name__)
 class TaskSlurmJob:
     # Идентификаторы
     job_id:int
-    parent_job_id:int
-    name:str
+    parent_job_id:int = field(default=0)
+    name:Optional[str] = field(default=None)
     # Отслеживание
-    work_dir:Path
-    partition:str
-    priority:str
-    nodes:str
-    status:str
-    stderr:Path
-    stdout:Path
-    exit_code:Optional[int]
+    work_dir:Optional[Path] = field(default=None)
+    partition:Optional[str] = field(default=None)
+    priority:Optional[str] = field(default=None)
+    nodes:Optional[str] = field(default=None)
+    status:Optional[str] = field(default=None)
+    stderr:Optional[Path] = field(default=None)
+    stdout:Optional[Path] = field(default=None)
+    exit_code:Optional[int] = field(default=None)
     # Время
     start:Optional[datetime] = field(default=None)
     limit:Optional[datetime] = field(default=None)
@@ -53,6 +53,9 @@ class TaskSlurmJob:
 
     def _update(self, slurm_data:Dict[str, Any]):
         if slurm_data:
+            for attr, value in self.__dict__.items():
+                if attr in ['job_id', 'start', 'limit']: continue
+                setattr(self, attr, slurm_data.get(attr, value))
             self.status = slurm_data['status']
 
             # Если задача запущена, собираем данные по лимитам времени
@@ -89,23 +92,24 @@ class TaskSlurmJob:
                                         self,
                                         exit_code_f:Optional[Path] = None
                                        ) -> None:
-        if not exit_code_f:
-            exit_code_f = (self.work_dir / '.exitcode').resolve()
-        logger.debug(f"Проверяем {exit_code_f}")
-        if exit_code_f.exists():
-            logger.debug(f"Найден .exitcode в {self.work_dir.as_posix()}:")
-            try:
-                # Читаем первую строку и преобразуем в число
-                with open(exit_code_f, 'r') as f:
-                    self.exit_code = int(f.readline().strip())
-                    logger.debug(f"exit_code: {self.exit_code}")
-                return None
-            except Exception as e:
-                logger.error(f"Ошибка при чтении {exit_code_f.as_posix()}: {e}")
-        else:
-            logger.error(f"Не найден .exitcode в {self.work_dir.as_posix()}")
-        
-        self._define_task_status_by_exit_code()
+        if self.work_dir:
+            if not exit_code_f:
+                exit_code_f = (self.work_dir / '.exitcode').resolve()
+            logger.debug(f"Проверяем {exit_code_f}")
+            if exit_code_f.exists():
+                logger.debug(f"Найден .exitcode в {self.work_dir.as_posix()}:")
+                try:
+                    # Читаем первую строку и преобразуем в число
+                    with open(exit_code_f, 'r') as f:
+                        self.exit_code = int(f.readline().strip())
+                        logger.debug(f"exit_code: {self.exit_code}")
+                    return None
+                except Exception as e:
+                    logger.error(f"Ошибка при чтении {exit_code_f.as_posix()}: {e}")
+            else:
+                logger.error(f"Не найден .exitcode в {self.work_dir.as_posix()}")
+            
+            self._define_task_status_by_exit_code()
         return None
 
     def _define_task_status_by_exit_code(
@@ -179,10 +183,6 @@ class TaskData:
                             )
 
         return task_data
-    
-    def _check_input_files(
-                           self
-                          ) -> None:
 
     def _check_output_files(
                             self
@@ -219,8 +219,11 @@ class ProcessingTask:
     sample_meta:SampleMeta
     result_meta:ResultMeta
     pipeline:Pipeline
+    # Индикаторы
     # Шаблон имени: sample_id_pipeline-name_pipeline-version
-    task_id:str = field(default="")
+    task_id:str = field(default_factory=str)
+    status:str = field(default="created")
+    sorting:str = field(default_factory=str)
     # Файлы
     data: TaskData = field(default_factory=TaskData)
     # Время
@@ -240,7 +243,6 @@ class ProcessingTask:
     #  - "processing" - идёт обработка данных;
     #  - "completed" - задание успешно завершено;
     #  - "failed" - задание завершено с ошибкой.
-    status:str = field(default="created")
     slurm_main_job:Optional[TaskSlurmJob] = field(default=None)
     slurm_child_jobs:Dict[int, TaskSlurmJob] = field(default_factory=dict)
     # Unix
@@ -255,37 +257,38 @@ class ProcessingTask:
         :return: Объект Task.
         """
         # Инициализируем основные поля SampleMeta
-        processing_task = ProcessingTask(
-                                         task_id=doc.get("task_id", ""),
-                                         sample_meta=SampleMeta.from_db(doc.get("sample_meta", "")),
-                                         result_meta=ResultMeta.from_db(doc.get("result_meta", "")),
-                                         pipeline=Pipeline.from_db(doc.get("pipeline", "")),
-                                         data=TaskData.from_dict(doc.get("data", "")),
-                                         created=doc.get("created"),
-                                         queued=doc.get("queued"),
-                                         finish=doc.get("finish"),
-                                         last_update=doc.get("last_update"),
-                                         time_from_creation_to_finish=doc.get("time_from_creation_to_finish", ""),
-                                         time_in_processing=doc.get("time_in_processing", ""),
-                                         status=doc.get("status", ""),
-                                         slurm_main_job=TaskSlurmJob.from_dict(doc.get("slurm_main_job", {})),
-                                         slurm_child_jobs={
-                                                           job_id:TaskSlurmJob.from_dict(job_data)
-                                                           for job_id, job_data in
-                                                           doc.get("slurm_child_jobs", {}).items()
-                                                          },
-                                         exit_code=doc.get("exit_code")
-                                        )
-        return processing_task
+        return ProcessingTask(
+                              task_id=doc.get("task_id", ""),
+                              sample_meta=SampleMeta.from_db(doc.get("sample_meta", "")),
+                              result_meta=ResultMeta.from_db(doc.get("result_meta", "")),
+                              pipeline=Pipeline.from_db(doc.get("pipeline", "")),
+                              data=TaskData.from_dict(doc.get("data", "")),
+                              created=doc.get("created"),
+                              queued=doc.get("queued"),
+                              finish=doc.get("finish"),
+                              last_update=doc.get("last_update"),
+                              time_from_creation_to_finish=doc.get("time_from_creation_to_finish", ""),
+                              time_in_processing=doc.get("time_in_processing", ""),
+                              status=doc.get("status", ""),
+                              slurm_main_job=TaskSlurmJob.from_dict(doc.get("slurm_main_job", {})),
+                              slurm_child_jobs={
+                                                job_id:TaskSlurmJob.from_dict(job_data)
+                                                for job_id, job_data in
+                                                doc.get("slurm_child_jobs", {}).items()
+                                               },
+                              exit_code=doc.get("exit_code")
+                             )
     
     def __post_init__(
                       self
                      ) -> None:
         self.task_id = f"{self.sample_meta.sample_id}_{self.pipeline.id}"
+        self.sorting = self.pipeline.sorting
 
     def _prepare_data(
                       self,
-                      script_renderer:ScriptRenderer
+                      script_renderer:ScriptRenderer,
+                      head_job_node:str                      
                      ) -> None:
         """
         Использует метаданные SampleMeta и ResultMeta для подготовки данных для обработки по инструкциям, указанным в Pipeline.
@@ -293,7 +296,8 @@ class ProcessingTask:
         """
         def __check_n_group_input_data(
                                        self:ProcessingTask,
-                                       script_renderer:ScriptRenderer
+                                       script_renderer:ScriptRenderer,
+                                       head_job_node:str
                                       ) -> bool:
             """
             Запускает шейпер входных данных.
@@ -308,6 +312,7 @@ class ProcessingTask:
                                                                       log_dir=self.data.log_dir,
                                                                       pipeline_timeout=self.pipeline.timeout,
                                                                       nxf_command=nxf_cmd,
+                                                                      head_job_node=head_job_node,
                                                                       head_job_stdout=self.data.head_job_stdout,
                                                                       head_job_stderr=self.data.head_job_stderr,
                                                                       head_job_exitcode_f=self.data.head_job_exitcode_f,
@@ -427,7 +432,8 @@ class ProcessingTask:
                 # Формируем группы входных данных
                 input_data_ready_n_starting_script_created = __check_n_group_input_data(
                                                                                         self,
-                                                                                        script_renderer
+                                                                                        script_renderer,
+                                                                                        head_job_node
                                                                                        )
         # Проверяем, что все данные готовы
         data_is_ok = all([
@@ -458,7 +464,7 @@ class ProcessingTask:
         for dir_path in [
                          self.data.work_dir,
                          (self.data.log_dir / 'slurm').resolve()
-                         ]:
+                        ]:
             if not dir_path.exists():
                 logger.debug(f"Создание директории {dir_path.as_posix()}")
                 dir_path.mkdir(parents=True, exist_ok=True)

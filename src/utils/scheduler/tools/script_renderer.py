@@ -33,6 +33,7 @@ class ScriptRenderer:
                                log_dir: Path,
                                pipeline_timeout: str,
                                nxf_command: str,
+                               head_job_node: str,
                                head_job_stdout:Path,
                                head_job_stderr:Path,
                                head_job_exitcode_f:Path,
@@ -57,6 +58,7 @@ class ScriptRenderer:
                                                    ENV_VARS=environment_variables,
                                                    NXF_VARIABLES=nxf_variables,
                                                    SLURM_OPTIONS=slurm_options,
+                                                   HEAD_JOB_NODE=head_job_node,
                                                    HEAD_JOB_STDOUT=head_job_stdout,
                                                    HEAD_JOB_STDERR=head_job_stderr,
                                                    HEAD_JOB_EXITCODE_F=head_job_exitcode_f

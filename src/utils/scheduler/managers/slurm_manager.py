@@ -7,7 +7,7 @@ from typing import Any, Dict, IO, List, Optional, Set, Union
 from pathlib import Path
 from utils.logger import get_logger
 from shlex import split as shlex_split
-from classes.processing_task import ProcessingTask
+from classes.processing_task import ProcessingTask, TaskSlurmJob
 from json import loads as json_loads
 
 
@@ -15,9 +15,12 @@ logger = get_logger(__name__)
 
 @dataclass(slots=True)
 class SlurmManager:
-    user:str
-    poll_interval:int
-    queue_size:int
+    _cfg:Dict[str, Any]
+    user:str = field(default_factory=str)
+    poll_interval:int = field(default=5)
+    # Максимальное количество головных заданий 
+    ljf_queue_size:int = field(default=14)
+    sjf_queue_size:int = field(default=2)
     # словарь {job_id:job_squeue_data}
     squeue_data:Dict[
                      int,
@@ -34,6 +37,11 @@ class SlurmManager:
 
 
     def __post_init__(self) -> None:
+        self.user = self._cfg.get('user', "")
+        if not self.user:
+            logger.error(f"Пользователь Slurm не указан в конфигурации!")
+        self.ljf_queue_size = self._cfg.get('ljf_queue_size', 2)
+        self.sjf_queue_size = self._cfg.get('sjf_queue_size', 14)
         self._check_slurm_presence()
         return
 
@@ -41,7 +49,7 @@ class SlurmManager:
         if self._run_subprocess(["which", "sbatch"]).returncode == 0:
             logger.debug("Slurm доступен.")
         else:
-            logger.error("Slurm не доступен.")
+            logger.error("Slurm не доступен.", )
             raise Exception("Slurm не доступен.")
     
     def _get_queued_tasks_data(
@@ -128,24 +136,50 @@ class SlurmManager:
 
         return None
     
+    def _submit_to_slurm(
+                         self,
+                         task:ProcessingTask
+                        ) -> None:
+        """Отправляет задание в Slurm"""
+        def extract_slurm_job_id(stdout: str) -> int:
+            """
+            Извлекает Slurm ID задачи из stdout
+            """
+            job_id = 0
+            try:
+                for line in stdout.splitlines():
+                    line = line.strip()
+                    if not line:
+                            continue
+                    if line.startswith("Submitted batch job"):
+                        parts = line.split()
+                        if len(parts) == 4 and parts[3].isdigit():
+                            job_id = int(parts[3])
+                            return job_id
+            except Exception as e:
+                    logger.error(f"Ошибка при чтении stdout: {e}")
+            finally:
+                return job_id
 
-    def submit_to_slurm(self, job_script: str, job_name: str, resources: Dict[str, Any]) -> str:
-        """Отправляет задание в Slurm и возвращает ID задачи."""
-        sbatch_cmd = ["sbatch"]
-        for key, value in resources.items():
-            sbatch_cmd.extend([f"--{key}", str(value)])
-        sbatch_cmd.extend(["--job-name", job_name, job_script])
-
+        sbatch_cmd = [
+                      'bash',
+                      task.data.start_script.as_posix()  
+                     ]
         try:
-            result = subprocess.run(
-                sbatch_cmd,
-                capture_output=True,
-                text=True,
-                check=True
-            )
-            job_id = result.stdout.strip().split()[-1]
-            logger.info(f"Задание {job_name} отправлено в Slurm с ID {job_id}.")
-            return job_id
+            result = self._run_subprocess(
+                                          cmd=sbatch_cmd,
+                                          check=True,
+                                          capture_output=True,
+                                         )
+            if result:
+                if result.returncode == 0:
+                    job_id = extract_slurm_job_id(result.stdout)
+                    if job_id:
+                        task.slurm_main_job = TaskSlurmJob(job_id)
+                        logger.info(f"Задание {task.task_id} отправлено в Slurm с ID {job_id}.")
+                        return None
+                else:
+                    logger.error(f"Ошибка при отправке задания {task.task_id} в Slurm: {result.stderr}")
         except subprocess.CalledProcessError as e:
             logger.error(f"Ошибка при отправке задания в Slurm: {e}")
             raise
@@ -153,7 +187,7 @@ class SlurmManager:
     def _get_job_info(self, job_id: str) -> Optional[Dict[str, Any]]:
         """Получает информацию о задании из Slurm."""
         try:
-            result = subprocess.run(
+            result = self._run_subprocess(
                 ["sacct", "-X", "-o", "JobID,State,ExitCode"],
                 capture_output=True,
                 text=True,
@@ -216,7 +250,7 @@ class SlurmManager:
                        shell: bool = False,
                        log_output: bool = True,
                        suppress_output: bool = False,
-                      ) -> op[subprocess.CompletedProcess]:
+                      ) -> Optional[subprocess.CompletedProcess]:
         """
         Обёртка над subprocess.run с расширенной логикой и безопасностью.
 
@@ -236,7 +270,7 @@ class SlurmManager:
         :param suppress_output: Подавлять вывод в консоль.
         :return: Объект subprocess.CompletedProcess.
         """
-
+        result = None
         # Преобразование строки в список (если shell=False)
         if isinstance(cmd, str) and not shell:
             try:
@@ -251,7 +285,7 @@ class SlurmManager:
 
         # Логирование команды
         if log_output:
-            logger.info(f"Запуск команды: {' '.join(cmd)}")
+            logger.debug(f"Запуск команды: {' '.join(cmd)}")
 
         # Настройка перенаправления вывода
         if suppress_output:
@@ -296,8 +330,9 @@ class SlurmManager:
                 raise
 
         # Логирование результата
-        if log_output and capture_output:
-            logger.debug(f"STDOUT:\n{result.stdout}")
-            logger.debug(f"STDERR:\n{result.stderr}")
+        if result:
+            if log_output and capture_output:
+                logger.debug(f"STDOUT:\n{result.stdout}")
+                logger.debug(f"STDERR:\n{result.stderr}")
 
         return result

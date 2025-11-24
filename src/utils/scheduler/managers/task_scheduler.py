@@ -24,10 +24,17 @@ class TaskScheduler:
     script_renderer:Optional[ScriptRenderer] = field(default=None)
     slurm_manager:Optional[SlurmManager] = field(default=None)
     pipelines: Dict[str, Pipeline] = field(default_factory=dict)
+    head_job_node:str = field(default_factory=str)
     # словарь созданных задач {task_id: ProcessingTask}
-    created_tasks: Dict[str, ProcessingTask] = field(default_factory=dict)
-    # словарь запущенных задач {task_id: ProcessingTask}
+    prepared_tasks:Dict[str, ProcessingTask] = field(default_factory=dict)
+    # словарь задач, подготовка которых завершилась с ошибкой
+    disprepared_tasks:Dict[str, ProcessingTask] = field(default_factory=dict)
+    # словарь всех запущенных задач {task_id: ProcessingTask}
     queued_tasks: Dict[str, ProcessingTask] = field(default_factory=dict)
+    # словарь запущенных задач, отсортированных по алгоритму Shortest Job First
+    queued_tasks_sjf: Dict[str, ProcessingTask] = field(default_factory=dict)
+    # словарь запущенных задач, отсортированных по алгоритму Longest Job First
+    queued_tasks_ljf: Dict[str, ProcessingTask] = field(default_factory=dict)
     # словарь данных для идёмпотентной загрузки в БД вида {collection: {doc_id: doc_data}
     data_to_db:Dict[str, Dict[str, Any]] = field(default_factory=dict)
     
@@ -48,9 +55,7 @@ class TaskScheduler:
         self._put_tasks_in_queue()
         # Удаляем конфиг для экономии памяти
         self._cfg.clear()
-
-
-        return
+        return None
         
     def _load_pipelines(
                         self
@@ -80,16 +85,14 @@ class TaskScheduler:
         """
         logger.debug("Инициализация менеджера Slurm...")
         self.slurm_manager = SlurmManager(
-                                          user=self._cfg['slurm_user'],
-                                          poll_interval=int(self._cfg['slurm_poll_interval']),
-                                          queue_size=int(self._cfg['slurm_queue_size'])
+                                          _cfg=self._cfg.get('slurm', {})
                                          )
         logger.info("Менеджер Slurm инициализирован.")
         return None
 
     def _actualize_tasks_data(
-                                     self
-                                    ) -> None:
+                              self
+                             ) -> None:
         """
         Выгружает из БД список созданных ранее задач, в т.ч. запущенных в обработку.
         Собирает данные о запущенных заданиях из Slurm.
@@ -98,10 +101,10 @@ class TaskScheduler:
         """
         # Обновляем информацию по созданным, но не запущенным заданиям
         logger.debug("Актуализация данных о созданных заданиях...")
-        self.created_tasks.update(self._get_tasks_from_db(statuses=["prepared"]))
+        self.prepared_tasks.update(self._get_tasks_from_db(statuses=["prepared"]))
         # Обновляем информацию по запущенным заданиям
         logger.debug("Актуализация данных о запущенных заданиях...")
-        unqueued_tasks:List[str] = []
+        unqueued_tasks:List[ProcessingTask] = []
         # Выгрузка из БД запущенных задач
         self.queued_tasks.update(self._get_tasks_from_db(statuses=["queued","running"]))
         # Обновление данных о запущенных заданиях с помощью Slurm
@@ -122,12 +125,12 @@ class TaskScheduler:
                         logger.debug(f"Данные задания {task_id} не получены из Slurm.")
                         logger.debug(f"Задание {task_id} помечено как завершённое.")
                         task._complete()
-                        unqueued_tasks.append(task_id)
+                        unqueued_tasks.append(task)
                 self._add_task_to_db_uploading(task)
 
         # Удаление завершённых заданий из списка поставленных в очередь
-        for task_id in unqueued_tasks:
-            self._remove_task_from_queued_in_TaskScheduler(task_id)
+        for task in unqueued_tasks:
+            self._remove_task_from_queued_in_TaskScheduler(task)
         return None
 
     def _get_tasks_from_db(
@@ -167,11 +170,26 @@ class TaskScheduler:
 
     def _remove_task_from_queued_in_TaskScheduler(
                                                   self,
-                                                  task_id: str
+                                                  task: ProcessingTask
                                                  ) -> None:
-        if task_id in self.queued_tasks:
-            del self.queued_tasks[task_id]
-            logger.debug(f"Задание {task_id} удалено из списка поставленных в очередь.")
+        if task.task_id in self.queued_tasks:
+            try:
+                del self.queued_tasks[task.task_id]
+                logger.debug(f"Задание {task.task_id} удалено из общего списка поставленных в очередь.")
+            except Exception as e:
+                logger.error(f"Ошибка при удалении задания {task.task_id} из общего списка поставленных в очередь: {e}")
+            # Удаляем из очередей по сортировке
+            for sorting_type, queue in {
+                                        "SJF": self.queued_tasks_sjf,
+                                        "LJF": self.queued_tasks_ljf
+                                       }.items():
+                if task.sorting == sorting_type:
+                    try:
+                        del queue[task.task_id]
+                        logger.debug(f"Задание {task.task_id} удалено из списка поставленных в очередь по алгоритму {sorting_type}.")
+                    except Exception as e:
+                        logger.error(f"Ошибка при удалении задания {task.task_id} из списка поставленных в очередь по алгоритму {sorting_type}: {e}")
+        return None
 
     def _create_new_tasks(
                           self
@@ -224,13 +242,17 @@ class TaskScheduler:
             logger.debug(f"Задание {task.task_id} инициализировано, подготовка данных...")
             # Генерируем данные для задания
             if self.script_renderer:
-                task._prepare_data(self.script_renderer)
+                task._prepare_data(
+                                   self.script_renderer,
+                                   self.head_job_node
+                                  )
                 if task.status == 'prepared':
                     logger.debug(f"Задание {task.task_id} подготовлено.")
                     # Добавляем задание в список созданных
-                    self.created_tasks[task.task_id] = task
+                    self.prepared_tasks[task.task_id] = task
                 else:
                     logger.error(f"Не удалось подготовить данные задания {task.task_id}: проблемы при создании")
+                    self.disprepared_tasks[task.task_id] = task
             else:
                 logger.error(f"Не удалось подготовить данные задания {task.task_id}: ScriptRenderer отсутствует")
         logger.error(f"Не удалось создать задание обработки образца {sample_id} пайплайном {pipeline.id}: недостаточно метаданных")
@@ -261,13 +283,62 @@ class TaskScheduler:
                             self
                            ) -> None:
         """
-        Проверяет очередь Slurm на возможность запуска новых заданий.
+        Проверяет очереди Slurm на возможность запуска новых заданий.
         Сортирует ранее созданные задания в зависимости от:
         - типа сортировки, указанного в пайплайне (SJF, LJF);
         - максимальной длительности задания;
         - размера входных данных.
         Добавляет задания в очередь Slurm в порядке, определённом сортировкой.
         """
+        def get_sort_key(task: ProcessingTask) -> float:
+            def timeout_to_minutes(timeout: str) -> int:
+                try:
+                    if "-" in timeout:
+                        days, hm = timeout.split("-")
+                        days = int(days)
+                    else:
+                        days = 0
+                        hm = timeout
+                    hours, minutes = map(int, hm.split(":"))
+                    return days * 1440 + hours * 60 + minutes
+                except Exception as e:
+                    logger.warning(f"Не удалось распарсить timeout '{timeout}': {e}")
+                    return 0
+            return task.data.input_files_size / timeout_to_minutes(task.pipeline.timeout)
+        
+        # Проверяем наличие подготовленных задач
+        if not self.prepared_tasks:
+            logger.debug("Нет задач со статусом 'prepared' для постановки в очередь.")
+            return None
+
+        if self.slurm_manager:
+            available_slots = 0
+            queues = {
+                      "SJF": [self.queued_tasks_sjf, self.slurm_manager.sjf_queue_size],
+                      "LJF": [self.queued_tasks_ljf, self.slurm_manager.ljf_queue_size]
+                     }
+            for queue_type, (queue, max_size) in queues.items():
+                current_queue_usage = len(queue)
+                available_slots = max(0, max_size - current_queue_usage)
+                if available_slots == 0:
+                    logger.debug(f"Достигнут лимит очереди {queue_type}. Новые задачи не ставятся.")
+                    continue
+                weighted_tasks = {
+                                  task_id:get_sort_key(task) for task_id, task in self.prepared_tasks.items()
+                                  if task.pipeline.sorting == queue_type
+                                 }
+                reverse_sort = queue_type == "LJF"
+                sorted_tasks_ids = sorted(weighted_tasks.items(), key=lambda item:item[1], reverse=reverse_sort)
+                # Ограничиваем по доступным слотам
+                task_ids_to_submit = sorted_tasks_ids[:available_slots]
+                for task_id, _ in task_ids_to_submit:
+                    task = self.prepared_tasks.pop(task_id)
+                    self.slurm_manager._submit_to_slurm(task)
+                    queue[task_id] = task
+                    self.queued_tasks[task_id] = task
+
+        return None
+
 
    
     def _task_completion_check(
