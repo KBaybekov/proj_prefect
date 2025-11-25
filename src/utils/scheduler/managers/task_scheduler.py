@@ -407,3 +407,26 @@ class TaskScheduler:
         for collection, data_storage in data2upload.items(): 
             upload_data(collection, data_storage)
             data_storage.clear()
+
+    def stop_scheduler(self) -> None:
+        """
+        Корректно останавливает TaskScheduler:
+        - отменяет таймер мониторинга
+        - выполняет финальную выгрузку данных в БД
+        - сбрасывает активные задачи при необходимости
+        """
+        logger.info("Остановка TaskScheduler...")
+
+        # 1. Останавливаем таймер мониторинга
+        if self.db_timer is not None:
+            logger.debug("Отмена таймера мониторинга планировщика...")
+            self.db_timer.cancel()
+            self.db_timer = None
+            logger.debug("Таймер мониторинга остановлен")
+
+        # 2. Выполняем финальную выгрузку накопленных данных в БД
+        if any(self.tasks2db.values()) or any(self.results2db.values()):
+            logger.debug("Выполнение финальной выгрузки данных в БД...")
+            self._upload_data_to_db()
+
+        logger.info("TaskScheduler остановлен корректно")

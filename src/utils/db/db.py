@@ -327,6 +327,31 @@ class ConfigurableMongoDAO:
         else:
             logger.warning(f"Неожиданное количество удалённых документов ({result.deleted_count}) в коллекции {collection}")
 
+    def stop_dao(self) -> None:
+        """
+        Корректно останавливает DAO:
+        - останавливает таймер мониторинга БД
+        - закрывает соединение с MongoDB
+        - освобождает ресурсы
+        """
+        logger.info("Остановка ConfigurableMongoDAO...")
+
+        # 1. Останавливаем таймер мониторинга
+        if self.db_timer is not None:
+            logger.debug("Остановка таймера мониторинга БД...")
+            self.db_timer.cancel()
+            self.db_timer = None
+            logger.debug("Таймер мониторинга остановлен")
+
+        # 2. Закрываем MongoClient
+        if self._client is not None:
+            logger.debug("Закрытие соединения с MongoDB...")
+            self._client.close()
+            self._client = MongoClient()  # заменяем на пустой, чтобы избежать повторного close()
+            logger.debug("Соединение с MongoDB закрыто")
+
+        logger.info("ConfigurableMongoDAO остановлен корректно")
+
 def ping_mongo(
                client: pymongo.MongoClient
               ) -> None:

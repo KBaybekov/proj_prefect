@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any, Dict, Tuple
 
 from prefect import flow, task
 from prefect.cache_policies import NO_CACHE
@@ -21,7 +21,7 @@ logger = get_logger(name=__name__)
 @flow(name="Initialization")
 def stage_init(
                cfg:Dict[str, Dict[str, Any]]
-              ) -> tuple:
+              ) -> Tuple[FsCrawler, ConfigurableMongoDAO, TaskScheduler]:
     """Subflow: config → DB → FS → Scheduler"""
     dao = init_db(cfg['database'])
     fs_watcher = init_fs(dao, cfg['filesystem'])
@@ -83,7 +83,11 @@ def main() -> None:
     fs_crawler, dao, scheduler = stage_init(cfg)
     # Запуск вотчдога для мониторинга событий ФС и постановки задач для обработки
     try:
-        run_watchdog(fs_crawler, dao, scheduler)
+        run_watchdog(
+                     fs_crawler,
+                     dao,
+                     scheduler
+                    )
     except KeyboardInterrupt:
         logger.debug("Watchdog stopped by user KeyboardInterrupt")
         logger.info("Shutting down...")

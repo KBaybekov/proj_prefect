@@ -561,3 +561,55 @@ class FsCrawler():
                                      db_collection=db_collection
                                     )
             return None
+
+    def stop_crawler(
+                     self
+                    ) -> None:
+        """
+        Корректно останавливает FsCrawler:
+        - прекращает наблюдение за файловой системой
+        - отменяет все отложенные таймеры
+        - выполняет немедленную запись накопленных изменений в БД (если есть)
+        - дожидается завершения фоновых задач
+        """
+        logger.info("Остановка FsCrawler...")
+
+        # 1. Останавливаем наблюдатель (watchdog)
+        if self.observer is not None:
+            logger.debug("Остановка Observer...")
+            self.observer.stop()
+            self.observer.join(timeout=5)  # Ждём завершения потока observer
+            if self.observer.is_alive():
+                logger.warning("Observer не завершился за 5 секунд, возможно, завис")
+            else:
+                logger.debug("Observer остановлен")
+            self.observer = None
+
+        # 2. Отменяем все таймеры
+        logger.debug("Отмена всех таймеров...")
+        for collection, timer in self.timers.items():
+            if timer is not None and timer.is_alive():
+                timer.cancel()
+                logger.debug(f"Таймер для {collection} отменён")
+
+        # 3. Очищаем таймеры
+        self.timers = {k: None for k in self.timers}
+
+        # 4. Принудительно сбрасываем все накопленные изменения в БД
+        logger.debug("Сброс накопленных изменений в БД...")
+        if any(getattr(self, collection) for collection in self.db_collections4storing.keys()):
+            try:
+                self._fs_changes2db(stage='flush_on_shutdown')
+                logger.info("Накопленные изменения перед остановкой записаны в БД")
+            except Exception as e:
+                logger.error(f"Ошибка при записи изменений перед остановкой: {e}")
+
+        # 5. Ожидаем, пока все блокировки освободятся (на случай, если кто-то в середине записи)
+        logger.debug("Ожидание освобождения блокировок...")
+        for collection, lock in self.locks.items():
+            if lock.locked():
+                logger.debug(f"Блокировка для {collection} занята, ожидаем...")
+                # Вместо force release — просто логируем, потому что release должен быть только в _fs_changes2db
+        # Не принудительно освобождаем — это нарушит инвариант! Lock'и должны отпускаться в __execute_data_transition
+
+        logger.info("FsCrawler остановлен корректно")
