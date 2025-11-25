@@ -25,7 +25,7 @@ def stage_init(
     """Subflow: config → DB → FS → Scheduler"""
     dao = init_db(cfg['database'])
     fs_watcher = init_fs(dao, cfg['filesystem'])
-    scheduler = init_scheduler(dao, cfg['scheduler'], cfg['pipelines'])
+    scheduler = init_scheduler(dao, cfg['scheduler'])
     return (fs_watcher, dao, scheduler)
 
 # инициализация БД (DAO) + индексы
@@ -51,7 +51,7 @@ def init_fs(
 # Инициализация планировщика задач
 def init_scheduler(
                    dao:ConfigurableMongoDAO,
-                   scheduler_cfg:Dict[str, Any],
+                   scheduler_cfg:Dict[str, Any]
                   ) -> TaskScheduler:
     scheduler = TaskScheduler(scheduler_cfg, dao)
     scheduler.init_scheduler()
