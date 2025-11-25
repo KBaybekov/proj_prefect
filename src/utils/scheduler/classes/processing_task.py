@@ -250,7 +250,11 @@ class ProcessingTask:
     exit_code:Optional[int] = field(default=None)
 
     @staticmethod
-    def from_dict(doc: Dict[str, Any]) -> 'ProcessingTask':
+    def from_dict(
+                  doc: Dict[str, Any],
+                  result_meta: Dict[str, Any],
+                  sample_meta: Dict[str, Any]
+                 ) -> 'ProcessingTask':
         """
         Создаёт объект ProcessingTask из документа БД.
 
@@ -260,9 +264,10 @@ class ProcessingTask:
         # Инициализируем основные поля SampleMeta
         return ProcessingTask(
                               task_id=doc.get("task_id", ""),
-                              sample_meta=SampleMeta.from_dict(doc.get("sample_meta", "")),
-                              result_meta=ResultMeta.from_dict(doc.get("result_meta", "")),
-                              pipeline=Pipeline.from_dict(doc.get("pipeline", "")),
+                              # SampleMeta и ResultMeta запрашиваются из БД отдельно
+                              sample_meta=SampleMeta.from_dict(sample_meta),
+                              result_meta=ResultMeta.from_dict(result_meta),
+                              pipeline=Pipeline.from_dict(doc.get("pipeline", {})),
                               data=TaskData.from_dict(doc.get("data", "")),
                               created=doc.get("created"),
                               queued=doc.get("queued"),
@@ -286,10 +291,24 @@ class ProcessingTask:
         """
         Конвертирует объект ProcessingTask в словарь для сохранения в БД.
         """
+        keys2remove = []
+        dict_obj = self.__dict__
+        for key in dict_obj:
+            if key.startswith("_"):
+                keys2remove.append(key)
+            if key in ["sample_meta", "result_meta"]:
+                if dict_obj[key]:
+                    dict_obj[key] = dict_obj[key].sample_id
+                else:
+                    dict_obj[key] = ""
+        for key in keys2remove:
+            del dict_obj[key]
+                    
+        return dict_obj
         return {
                 "task_id": self.task_id,
                 "sample_meta": self.sample_meta.to_dict(),
-                
+
                 
                }
     
@@ -476,6 +495,8 @@ class ProcessingTask:
         self.time_in_processing = "00:00:00"
         self.status = "queued"
         self.slurm_main_job = TaskSlurmJob(job_id)
+        # Обновляем статус задания в SampleMeta
+        self.sample_meta.tasks[self.pipeline.id] = {self.task_id:self.status}
         return None
 
     def _update(
@@ -493,6 +514,8 @@ class ProcessingTask:
         # обновляем данные главного задания
         if self.slurm_main_job:
             self.slurm_main_job._update(slurm_data)
+            # Обновляем собственный статус
+            self.status = 'processing' if self.slurm_main_job.status == 'RUNNING' else 'queued'
         # Обновляем данные дочерних задач
         child_jobs = slurm_data.get("child_jobs", {})
         if child_jobs:
@@ -501,6 +524,8 @@ class ProcessingTask:
                     self.slurm_child_jobs[job_id]._update(job_data)
                 else:
                     self.slurm_child_jobs[job_id] = TaskSlurmJob.from_dict(job_data)
+        # Обновляем статус задания в SampleMeta
+        self.sample_meta.tasks[self.pipeline.id] = {self.task_id:self.status}
         return None
 
     def _complete(
@@ -524,6 +549,8 @@ class ProcessingTask:
         self.data._check_output_files()
         # Добавляем информацию о выходных файлах в ResultMeta
         self.result_meta.results[self.pipeline.id] = self.data.output_data
+        # Обновляем статус задания в SampleMeta
+        self.sample_meta.tasks[self.pipeline.id] = {self.task_id:self.status}
         return None
 
     def __update_time_mark(

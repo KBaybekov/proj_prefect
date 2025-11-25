@@ -32,8 +32,10 @@ class TaskScheduler:
     queued_tasks_sjf: Dict[str, ProcessingTask] = field(default_factory=dict)
     # словарь запущенных задач, отсортированных по алгоритму Longest Job First
     queued_tasks_ljf: Dict[str, ProcessingTask] = field(default_factory=dict)
+    
+    # словари данных для идёмпотентной загрузки в БД вида {collection: {doc_id: doc_data}
     results2db:Dict[str, ResultMeta] = field(default_factory=dict)
-    # словарь данных для идёмпотентной загрузки в БД вида {collection: {doc_id: doc_data}
+    samples2db:Dict[str, SampleMeta] = field(default_factory=dict)
     tasks2db:Dict[str, ProcessingTask] = field(default_factory=dict)
     db_timer:Optional[Timer] = field(default=None)
     
@@ -138,7 +140,10 @@ class TaskScheduler:
                         task._complete()
                         if task.status == 'completed':
                              self.results2db.update({
-                                                     task.result_meta.sample_id:task.result_meta
+                                                     task.sample_meta.sample_id:task.result_meta
+                                                    })
+                             self.samples2db.update({
+                                                     task.sample_meta.sample_id:task.sample_meta
                                                     })
                         unqueued_tasks.append(task)
                 self._add_task_to_db_uploading(task)
@@ -156,6 +161,22 @@ class TaskScheduler:
         Выгружает из БД список задач.
         Возвращает словарь {job_id: ProcessingTask}, сохраняя его в self.queued_tasks.
         """
+        def add_metadata_to_obj_storage(
+                                        obj_id:str,
+                                        obj_storage:Dict[str, Any],
+                                        obj_type:str,
+                                       ) -> Dict[str, dict]:
+            if obj_id not in obj_storage:
+                collection = f'{obj_type}s'
+                obj_storage[obj_id] = self.dao.find_one(
+                                                        collection=collection,
+                                                        query={'sample_id': obj_id},
+                                                        projection={}
+                                                       )
+            return obj_storage
+
+        samples = {}
+        results = {}
         dao_request = self.dao.find(
                                     collection="tasks",
                                     query={'status': {"$in":statuses}},
@@ -165,8 +186,25 @@ class TaskScheduler:
             logger.debug(f"Выгружено задач из БД: {len(dao_request)}")
         else:
             logger.debug("Выгружено поставленных в очередь задач из БД: 0")
+        # Выгружаем также данные об образцах и результатах
+        for task_data in dao_request:
+            sample_id = task_data.get("sample_meta", "")
+            if sample_id:
+                for obj_type, obj_storage in {
+                                             "sample": samples,
+                                             "result": results
+                                            }.items():
+                    obj_storage = add_metadata_to_obj_storage(
+                                                              obj_id=sample_id,
+                                                              obj_storage=obj_storage,
+                                                              obj_type=obj_type
+                                                             )
         tasks = {
-                 task_data['task_id']:ProcessingTask.from_dict(task_data)
+                 task_data['task_id']:ProcessingTask.from_dict(
+                                                               doc=task_data,
+                                                               result_meta=results.get(task_data.get("result_meta", ""), {}),
+                                                               sample_meta=samples.get(task_data.get("sample_meta", ""), {})
+                                                              )
                  for task_data in dao_request
                 }
         return tasks
@@ -402,6 +440,7 @@ class TaskScheduler:
         
         data2upload:Dict[str, dict] = {
                                        "results":self.results2db,
+                                       "samples":self.samples2db,
                                        "tasks":self.tasks2db
                                       }
         for collection, data_storage in data2upload.items(): 
@@ -425,7 +464,7 @@ class TaskScheduler:
             logger.debug("Таймер мониторинга остановлен")
 
         # 2. Выполняем финальную выгрузку накопленных данных в БД
-        if any(self.tasks2db.values()) or any(self.results2db.values()):
+        if any(self.tasks2db.values()) or any(self.results2db.values()) or any(self.samples2db.values()):
             logger.debug("Выполнение финальной выгрузки данных в БД...")
             self._upload_data_to_db()
 
