@@ -1,6 +1,6 @@
 <mxfile host="65bd71144e">
     <diagram id="liNp7VBEPhLPeZoA0ARd" name="File_found/created">
-        <mxGraphModel dx="1434" dy="827" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="827" pageHeight="1169" math="0" shadow="0">
+        <mxGraphModel dx="732" dy="851" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="827" pageHeight="1169" math="0" shadow="0">
             <root>
                 <mxCell id="0"/>
                 <mxCell id="1" parent="0"/>
@@ -123,7 +123,7 @@
         </mxGraphModel>
     </diagram>
     <diagram id="dNh2bA4HYzJonOibLc1j" name="File_modified">
-        <mxGraphModel dx="1434" dy="827" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="827" pageHeight="1169" math="0" shadow="0">
+        <mxGraphModel dx="732" dy="851" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="827" pageHeight="1169" math="0" shadow="0">
             <root>
                 <mxCell id="0"/>
                 <mxCell id="1" parent="0"/>
@@ -313,7 +313,7 @@
         </mxGraphModel>
     </diagram>
     <diagram id="vBcvQkUICrc2UdayDag6" name="File_moved">
-        <mxGraphModel dx="693" dy="1187" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="827" pageHeight="1169" math="0" shadow="0">
+        <mxGraphModel dx="732" dy="851" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="827" pageHeight="1169" math="0" shadow="0">
             <root>
                 <mxCell id="0"/>
                 <mxCell id="1" parent="0"/>
@@ -377,7 +377,7 @@
         </mxGraphModel>
     </diagram>
     <diagram id="jW1qXCHK0a-NCqvgOoSI" name="File_deleted">
-        <mxGraphModel dx="811" dy="1187" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="827" pageHeight="1169" math="0" shadow="0">
+        <mxGraphModel dx="732" dy="851" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="827" pageHeight="1169" math="0" shadow="0">
             <root>
                 <mxCell id="0"/>
                 <mxCell id="1" parent="0"/>
@@ -439,7 +439,7 @@
         </mxGraphModel>
     </diagram>
     <diagram id="AETH1ObfdASP2B999Qau" name="update_batch">
-        <mxGraphModel dx="1822" dy="1055" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="827" pageHeight="1169" math="0" shadow="0">
+        <mxGraphModel dx="732" dy="851" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="827" pageHeight="1169" math="0" shadow="0">
             <root>
                 <mxCell id="0"/>
                 <mxCell id="1" parent="0"/>
@@ -605,10 +605,10 @@
                 <mxCell id="g4PHG0kjA1sccpUDpBrq-1" value="мета файла" style="strokeWidth=2;shape=mxgraph.flowchart.document2;whiteSpace=wrap;size=0.25;fillColor=#0050ef;fontColor=#ffffff;strokeColor=#001DBC;" parent="1" vertex="1">
                     <mxGeometry x="540" y="1115" width="100" height="40" as="geometry"/>
                 </mxCell>
-                <mxCell id="3F09DEbbjHL4RmbKgQSG-2" style="edgeStyle=none;html=1;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="3F09DEbbjHL4RmbKgQSG-1" target="_GoQZAgZHhCexFUvrGd--1">
+                <mxCell id="3F09DEbbjHL4RmbKgQSG-2" style="edgeStyle=none;html=1;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" parent="1" source="3F09DEbbjHL4RmbKgQSG-1" target="_GoQZAgZHhCexFUvrGd--1" edge="1">
                     <mxGeometry relative="1" as="geometry"/>
                 </mxCell>
-                <mxCell id="3F09DEbbjHL4RmbKgQSG-1" value="тип изменения&#xa;(создан/модифицирован/удалён)" style="strokeWidth=2;shape=mxgraph.flowchart.document2;whiteSpace=wrap;size=0.25;fillColor=#0050ef;fontColor=#ffffff;strokeColor=#001DBC;" vertex="1" parent="1">
+                <mxCell id="3F09DEbbjHL4RmbKgQSG-1" value="тип изменения&#xa;(создан/модифицирован/удалён)" style="strokeWidth=2;shape=mxgraph.flowchart.document2;whiteSpace=wrap;size=0.25;fillColor=#0050ef;fontColor=#ffffff;strokeColor=#001DBC;" parent="1" vertex="1">
                     <mxGeometry x="75.05" y="1105" width="190" height="60" as="geometry"/>
                 </mxCell>
             </root>
