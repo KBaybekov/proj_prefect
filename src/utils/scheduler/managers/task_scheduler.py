@@ -32,7 +32,7 @@ class TaskScheduler:
     queued_tasks_sjf: Dict[str, ProcessingTask] = field(default_factory=dict)
     # словарь запущенных задач, отсортированных по алгоритму Longest Job First
     queued_tasks_ljf: Dict[str, ProcessingTask] = field(default_factory=dict)
-    results2db:Dict[str, Dict[str, Any]] = field(default_factory=dict)
+    results2db:Dict[str, ResultMeta] = field(default_factory=dict)
     # словарь данных для идёмпотентной загрузки в БД вида {collection: {doc_id: doc_data}
     tasks2db:Dict[str, ProcessingTask] = field(default_factory=dict)
     db_timer:Optional[Timer] = field(default=None)
@@ -76,8 +76,8 @@ class TaskScheduler:
         """
         self.pipelines = {
                           pipeline_id:Pipeline(
-                                               _cfg=pipeline_data,
-                                               _shaper_dir=Path(self._cfg['shaper_dir']),
+                                               cfg=pipeline_data,
+                                               shaper_dir=Path(self._cfg['shaper_dir']),
                                                id=pipeline_id,
                                                nextflow_config=self._cfg.get('nextflow_config', ''),
                                                service_data=self._cfg.get('service_data', {})
@@ -138,7 +138,7 @@ class TaskScheduler:
                         task._complete()
                         if task.status == 'completed':
                              self.results2db.update({
-                                                     task.sample_meta.sample_id:task.data.output_data
+                                                     task.result_meta.sample_id:task.result_meta
                                                     })
                         unqueued_tasks.append(task)
                 self._add_task_to_db_uploading(task)
@@ -149,15 +149,16 @@ class TaskScheduler:
         return None
 
     def _get_tasks_from_db(
-                           self
+                           self,
+                           statuses:List[str]
                           ) -> Dict[str, ProcessingTask]:
         """
-        Выгружает из БД список задач, запущенных ранее в обработку.
+        Выгружает из БД список задач.
         Возвращает словарь {job_id: ProcessingTask}, сохраняя его в self.queued_tasks.
         """
         dao_request = self.dao.find(
                                     collection="tasks",
-                                    query={'status': {"$in":["queued","processing"]}},
+                                    query={'status': {"$in":statuses}},
                                     projection={}
                                    )
         if dao_request:
@@ -284,9 +285,9 @@ class TaskScheduler:
         doc = self.dao.find_one(f'{obj_type}s', {'sample_id': sample_id})
         if doc:
             if obj_type == 'sample':
-                meta = SampleMeta.from_db(doc)
+                meta = SampleMeta.from_dict(doc)
             elif obj_type == 'result':
-                meta = ResultMeta.from_db(doc)
+                meta = ResultMeta.from_dict(doc)
             logger.debug(f"Метаданные '{obj_type}' для {sample_id} получены.")
         else:
             logger.error(f"Не удалось получить метаданные '{obj_type}' образца {sample_id} из БД.")
@@ -372,8 +373,7 @@ class TaskScheduler:
         """
         def __check_new_data():
             self._update()
-            if self.db_timer:
-                self.db_timer.start()
+            self._monitor_scheduler()
         self.db_timer = Timer(self.poll_interval, __check_new_data)
         self.db_timer.start()
 
@@ -407,4 +407,3 @@ class TaskScheduler:
         for collection, data_storage in data2upload.items(): 
             upload_data(collection, data_storage)
             data_storage.clear()
-            

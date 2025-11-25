@@ -10,11 +10,11 @@ from pymongo import MongoClient
 
 from typing import Any, Dict, List, Mapping, Optional
 from datetime import datetime, timezone
+from threading import Timer
 
 from enum import Enum
 from dataclasses import dataclass, field, fields, asdict, is_dataclass
 from pathlib import Path
-import yaml
 from utils.logger import get_logger
 
 logger = get_logger(name=__name__)
@@ -52,16 +52,6 @@ def _normalize(value: Any) -> Any:
         # Рекурсивно нормализуем элементы коллекций (возвращаем список)
         return [_normalize(v) for v in value]
     return value
-
-
-def _dir_from_str(s: str) -> int:
-    s = s.strip().upper()
-    if s == "ASC":
-        return pymongo.ASCENDING
-    if s == "DESC":
-        return pymongo.DESCENDING
-    raise ValueError(f"Unknown index direction: {s}")
-
 
 def to_mongo(obj: Any, *, keep_empty: bool = True) -> Any:
     """Рекурсивно превращает датаклассы/сложные объекты в JSON-совместимые структуры для PyMongo.
@@ -106,29 +96,50 @@ class ConfigurableMongoDAO:
     _cfg: Dict[str, Any] 
     _client: MongoClient = field(default_factory=MongoClient)
     db: pymongo.database.Database = field(init=False) # type: ignore
+    poll_interval: int = 10
+    db_timer:Optional[Timer] = field(default=None)
 
     def init_dao(
                  self
                 ) -> None:
-        self._client = self._get_mongo_client()
+        self._get_mongo_client()
         self.db = self._client[self._cfg['db_name']]
         self._check_collections()
         return None
     
+    def start_dao(
+                  self
+                 ) -> None:
+        """
+        Переводит DAO в режим мониторинга.
+        """
+        logger.info("Запуск мониторинга базы данных...")
+        self._monitor_db()
+
+    def _monitor_db(
+                    self
+                   ) -> None:
+        """
+        Периодически проверяет изменения в выполнении заданий.
+        Выгружает изменения в БД.
+        """
+        def __check_db():
+            ping_mongo(self._client)
+            self._monitor_db()
+        self.db_timer = Timer(self.poll_interval, __check_db)
+        self.db_timer.start()
+
     def _get_mongo_client(
                           self                              
-                         ) -> MongoClient:   
-        client = MongoClient(
-                             host=self._cfg['host'],
-                             username=self._cfg['user'],
-                             password=self._cfg['password'],
-                             serverSelectionTimeoutMS=int(self._cfg['timeout'])
-                            )
-        try:
-            client.admin.command("ping")
-        except pymongo.errors.ServerSelectionTimeoutError: # type: ignore
-            raise ValueError('DB unavailable')
-        return client
+                         ) -> None:   
+        self._client = MongoClient(
+                                   host=self._cfg['host'],
+                                   username=self._cfg['user'],
+                                   password=self._cfg['password'],
+                                   serverSelectionTimeoutMS=int(self._cfg['timeout'])
+                                  )
+        ping_mongo(self._client)
+        return None
 
     def _check_collections(
                            self
@@ -316,22 +327,13 @@ class ConfigurableMongoDAO:
         else:
             logger.warning(f"Неожиданное количество удалённых документов ({result.deleted_count}) в коллекции {collection}")
 
-def _load_db_config_yaml(path: Path) -> Dict[str, Dict[str, Any]]:
-    """Читаем config/db_config.yaml и собираем структуру индексов."""
-    if not path.exists():
-        raise FileNotFoundError(f"DB config not found: {path}")
-    data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
-    cols = data.get("collections", {}) or {}
-    out: Dict[str, Dict[str, Any]] = {}
-    for coll_name, spec in cols.items():
-        idx_list = []
-        for idx in spec.get("indexes", []) or []:
-            keys_raw = idx.get("keys", [])
-            keys_parsed: List[tuple[str, int]] = []
-            for k in keys_raw:
-                if not (isinstance(k, (list, tuple)) and len(k) == 2):
-                    raise ValueError(f"Invalid key spec for {coll_name}: {k}")
-                keys_parsed.append((str(k[0]), _dir_from_str(str(k[1]))))
-            idx_list.append({**{k: v for k, v in idx.items() if k != "keys"}, "keys": keys_parsed})
-        out[coll_name] = {"indexes": idx_list}
-    return out
+def ping_mongo(
+               client: pymongo.MongoClient
+              ) -> None:
+    """
+    Проверяет доступность MongoDB.
+    """
+    try:
+        client.admin.command("ping")
+    except pymongo.errors.ServerSelectionTimeoutError: # type: ignore
+        raise ValueError('DB unavailable')

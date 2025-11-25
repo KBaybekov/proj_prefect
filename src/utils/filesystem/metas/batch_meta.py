@@ -41,7 +41,9 @@ class BatchMeta:
     
 
     @staticmethod
-    def from_db(doc: Dict[str, Any]) -> 'BatchMeta':
+    def from_dict(
+                  doc: Dict[str, Any]
+                 ) -> 'BatchMeta':
         """
         Создаёт объект BatchMeta из документа БД.
 
@@ -73,6 +75,27 @@ class BatchMeta:
                                                      batch.fingerprint)
 
         return batch
+    
+    def to_dict(
+                self
+               ) -> Dict[str, Any]:
+        """
+        Конвертирует объект BatchMeta в словарь.
+        """
+        keys2remove = []
+        dict_obj = self.__dict__
+        for key in dict_obj:
+            if key.startswith("_"):
+                keys2remove.append(key)
+            if key in ["final_summary", "sequencing_summary"]:
+                if dict_obj[key]:
+                    dict_obj[key] = dict_obj[key].as_posix()
+                else:
+                    dict_obj[key] = ""
+        for key in keys2remove:
+            del dict_obj[key]
+                    
+        return dict_obj
 
     def update_batch(
                         self,

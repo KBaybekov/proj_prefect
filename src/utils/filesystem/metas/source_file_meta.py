@@ -41,7 +41,9 @@ class SourceFileMeta:
     fingerprint: str = field(default_factory=str)
 
     @staticmethod
-    def from_db(doc: Dict[str, Any]) -> 'SourceFileMeta':
+    def from_dict(
+                  doc: Dict[str, Any]
+                 ) -> 'SourceFileMeta':
         """
         Создаёт объект BatchMeta из документа БД.
 
@@ -49,31 +51,51 @@ class SourceFileMeta:
         :return: Объект BatchMeta.
         """
         # Инициализируем основные поля SourceFileMeta
-        file_meta = SourceFileMeta(
-                                   filepath=Path(doc.get("filepath", "")),
-                                   symlink_dir=Path(doc.get("symlink_dir", "")),
-                                   name=doc.get("name", ""),
-                                   directory=Path(doc.get("directory", "")),
-                                   symlink=Path(doc.get("symlink", "")),
-                                   extension=doc.get("extension", ""),
-                                   basename=doc.get("basename", ""),
-                                   quality_pass=doc.get("quality_pass", False),
-                                   batch=doc.get("batch", ""),
-                                   sample=doc.get("sample", ""),
-                                   size=doc.get("size", 0),
-                                   created=doc.get("created"),
-                                   modified=doc.get("modified"),
-                                   dev=doc.get("dev", 0),
-                                   ino=doc.get("ino", 0),
-                                   nlink=doc.get("nlink", 0),
-                                   status=doc.get("status", "indexed"),
-                                   changes=doc.get("changes", {}),
-                                   previous_version=doc.get("previous_version", ""),
-                                   fingerprint=doc.get("fingerprint", "")
-                                  )
-        return file_meta
+        return SourceFileMeta(
+                              filepath=Path(doc.get("filepath", "")),
+                              symlink_dir=Path(doc.get("symlink_dir", "")),
+                              name=doc.get("name", ""),
+                              directory=Path(doc.get("directory", "")),
+                              symlink=Path(doc.get("symlink", "")),
+                              extension=doc.get("extension", ""),
+                              basename=doc.get("basename", ""),
+                              quality_pass=doc.get("quality_pass", False),
+                              batch=doc.get("batch", ""),
+                              sample=doc.get("sample", ""),
+                              size=doc.get("size", 0),
+                              created=doc.get("created"),
+                              modified=doc.get("modified"),
+                              dev=doc.get("dev", 0),
+                              ino=doc.get("ino", 0),
+                              nlink=doc.get("nlink", 0),
+                              status=doc.get("status", "indexed"),
+                              changes=doc.get("changes", {}),
+                              previous_version=doc.get("previous_version", ""),
+                              fingerprint=doc.get("fingerprint", "")
+                             )
 
-    def __post_init__(self):
+    def to_dict(
+                self
+               ) -> Dict[str, Any]:
+        """
+        Конвертирует объект SourceFileMeta в словарь.
+        """
+        dict_obj = self.__dict__
+        for key in [
+                    "filepath",
+                    "symlink_dir",
+                    "symlink",
+                    "directory"
+                   ]:
+            if key in dict_obj:
+                dict_obj[key] = dict_obj[key].as_posix()
+            else:
+                dict_obj[key] = ""
+        return dict_obj
+
+    def __post_init__(
+                      self
+                     ) -> None :
         # Получаем данные по принадлежности файла
         self.batch = '_'.join(str(self.filepath.parts[-3]).split('_')[3:])
         self.sample = self.filepath.parts[-4]
@@ -99,8 +121,11 @@ class SourceFileMeta:
             h.update(str(v).encode())
             h.update(b'|')
         self.fingerprint = h.hexdigest()
+        return None
         
-    def finalize(self):
+    def finalize(
+                 self
+                ) -> None :
         def _is_qc_pass(file: Path) -> bool:
             """
             Принимает полный путь к файлу и возвращает True, если:
@@ -128,3 +153,4 @@ class SourceFileMeta:
         self.quality_pass = _is_qc_pass(self.filepath)
         self.name = self.symlink.name
         self.status = 'indexed'
+        return None

@@ -88,21 +88,25 @@ class FsCrawler():
         self.new_indexed_file_deletions: Dict[str, datetime] = {}
         # Куда сохранять зафиксированные изменения в метаданных файлов/батчей/образцов
         self.db_collections4storing = {
+                                       'new_indexed_file_deletions':'files',
                                        'new_indexed_files':'files',
-                                       'new_indexed_batches':'batches',
-                                       'new_indexed_samples':'samples',
                                        'new_indexed_file_moves':'files',
+                                       'new_indexed_batches':'batches',
+                                       'new_indexed_samples':'samples'
                                       }
         self.db_debounce:int = 10
         self.file_modified_debounce:int = 5
         self.db_update_interval:int = 30
         # таймеры и блокировки для потокобезопасности и периодической записи в БД
-        self.timers: Dict[str, Optional[Timer]] = {collection:None
-                                                                      for collection in self.db_collections4storing.keys()}
+        self.timers: Dict[str, Optional[Timer]] = {
+                                                   collection:None
+                                                   for collection in self.db_collections4storing.keys()
+                                                  }
         
         self.locks: Dict[str, Lock] = {
-                                                 collection:Lock() 
-                                                 for collection in self.db_collections4storing.keys()}
+                                       collection:Lock() 
+                                       for collection in self.db_collections4storing.keys()
+                                      }
         # Состояние наблюдения
         self.observer: Optional[Observer] = None # type: ignore
 
@@ -368,7 +372,7 @@ class FsCrawler():
                                 projection=None  # Загружаем все поля
                                )
         if doc:
-            meta_obj = config["class"].from_db(doc)
+            meta_obj = config["class"].from_dict(doc)
             # Удаляем записи об изменениях и предыдущей версии 
             # в случае изменений эти атрибуты будут заполнены новой информацией
             meta_obj.changes = {} # type: ignore
@@ -469,7 +473,7 @@ class FsCrawler():
                                      collection:str,
                                      db_collection:str 
                                     ):
-            data:Dict[str, Union[str, Path|SourceFileMeta|BatchMeta|SampleMeta]] = getattr(self, collection, {})
+            data:Dict[str, Path|SourceFileMeta|BatchMeta|SampleMeta|datetime] = getattr(self, collection, {})
             if data:
                 for meta in data.values():
                     if isinstance(meta, BatchMeta):
@@ -487,7 +491,7 @@ class FsCrawler():
                                              )
                 elif stage == 'monitoring':
                     if self.timers[collection]:
-                    self.timers[collection].cancel() # type: ignore
+                        self.timers[collection].cancel() # type: ignore
                 self.timers[collection] = Timer(
                                                           interval=self.db_debounce,
                                                           function=__execute_data_transition,
@@ -504,7 +508,7 @@ class FsCrawler():
         def __execute_data_transition(
                                       collection:str,
                                       db_collection:str,
-                                      data:Dict[str, Union[str, Path|SourceFileMeta|BatchMeta|SampleMeta]]
+                                      data:Dict[str, Path|SourceFileMeta|BatchMeta|SampleMeta|datetime]
                                      ) -> None:
             data_lock = self.locks[collection]
             # блокируем запись в коллекцию на время записи данных в БД
@@ -535,7 +539,7 @@ class FsCrawler():
                                            )
                 
                 else:
-                    data2upload: List[Dict[str, Any]] = [meta.__dict__ for meta in data.values()] # type: ignore
+                    data2upload: List[Dict[str, Any]] = [meta.to_dict() for meta in data.values()]  # type: ignore
                     # Обновляем статусы устаревших метаданных
                     for meta in data2upload:
                         if meta["previous_version"]:

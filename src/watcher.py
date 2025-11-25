@@ -5,17 +5,15 @@
 from __future__ import annotations
 
 from pathlib import Path
-from datetime import datetime, timezone
-from dataclasses import fields, is_dataclass
-from typing import Any, Dict, List
+from typing import Any, Dict
 
 from prefect import flow, task
 from prefect.cache_policies import NO_CACHE
 
 from utils.common import load_yaml, setup_parser
-from utils.db.db import ConfigurableMongoDAO, _load_db_config_yaml, get_mongo_client
+from utils.db.db import ConfigurableMongoDAO
 from utils.filesystem.crawler.fs_crawler import FsCrawler
-from utils.scheduler.task_scheduler import TaskScheduler
+from utils.scheduler.managers.task_scheduler import TaskScheduler
 from utils.logger import get_logger
 
 logger = get_logger(name=__name__)
@@ -54,11 +52,9 @@ def init_fs(
 def init_scheduler(
                    dao:ConfigurableMongoDAO,
                    scheduler_cfg:Dict[str, Any],
-                   pipeline_cfg:Dict[str, Dict[str, Any]]
                   ) -> TaskScheduler:
-    slurm_poll_interval = scheduler_cfg.get("slurm_poll_interval", 60)
-    scheduler = TaskScheduler(dao, slurm_poll_interval)
-    scheduler.init_scheduler(pipeline_cfg)
+    scheduler = TaskScheduler(scheduler_cfg, dao)
+    scheduler.init_scheduler()
     return scheduler
 
 @flow(name="Watchdog")
@@ -84,15 +80,15 @@ def main() -> None:
                                                critical=True
                                               )
     # Инициируем системы
-    fs_watcher, dao, scheduler = stage_init(cfg)
+    fs_crawler, dao, scheduler = stage_init(cfg)
     # Запуск вотчдога для мониторинга событий ФС и постановки задач для обработки
     try:
-        run_watchdog(fs_watcher, dao, scheduler)
+        run_watchdog(fs_crawler, dao, scheduler)
     except KeyboardInterrupt:
         logger.debug("Watchdog stopped by user KeyboardInterrupt")
         logger.info("Shutting down...")
     finally:
-        fs_watcher.stop_crawler()
+        fs_crawler.stop_crawler()
         scheduler.stop_scheduler()
         dao.stop_dao()
 

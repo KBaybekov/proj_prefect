@@ -252,17 +252,17 @@ class ProcessingTask:
     @staticmethod
     def from_dict(doc: Dict[str, Any]) -> 'ProcessingTask':
         """
-        Создаёт объект Task из документа БД.
+        Создаёт объект ProcessingTask из документа БД.
 
         :param doc: Документ из коллекции 'tasks' в MongoDB.
-        :return: Объект Task.
+        :return: Объект ProcessingTask.
         """
         # Инициализируем основные поля SampleMeta
         return ProcessingTask(
                               task_id=doc.get("task_id", ""),
-                              sample_meta=SampleMeta.from_db(doc.get("sample_meta", "")),
-                              result_meta=ResultMeta.from_db(doc.get("result_meta", "")),
-                              pipeline=Pipeline.from_db(doc.get("pipeline", "")),
+                              sample_meta=SampleMeta.from_dict(doc.get("sample_meta", "")),
+                              result_meta=ResultMeta.from_dict(doc.get("result_meta", "")),
+                              pipeline=Pipeline.from_dict(doc.get("pipeline", "")),
                               data=TaskData.from_dict(doc.get("data", "")),
                               created=doc.get("created"),
                               queued=doc.get("queued"),
@@ -280,7 +280,18 @@ class ProcessingTask:
                               exit_code=doc.get("exit_code")
                              )
     
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(
+                self
+               ) -> Dict[str, Any]:
+        """
+        Конвертирует объект ProcessingTask в словарь для сохранения в БД.
+        """
+        return {
+                "task_id": self.task_id,
+                "sample_meta": self.sample_meta.to_dict(),
+                
+                
+               }
     
     def __post_init__(
                       self
@@ -510,9 +521,10 @@ class ProcessingTask:
                                          )
             self.status = 'completed' if self.slurm_main_job.status == 'completed' else 'failed'
         # Поиск выходных файлов в папке результата
-        self.data._check_output_files()        
+        self.data._check_output_files()
+        # Добавляем информацию о выходных файлах в ResultMeta
+        self.result_meta.results[self.pipeline.id] = self.data.output_data
         return None
-
 
     def __update_time_mark(
                            self
@@ -542,7 +554,3 @@ class ProcessingTask:
             minutes, seconds = divmod(remainder, 60)
             return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
         return "00:00:00"
-
-
-    def to_db(self) -> None:
-        return

@@ -49,7 +49,9 @@ class SampleMeta:
     previous_version: str = field(default_factory=str)
     
     @staticmethod
-    def from_db(doc: Dict[str, Any]) -> 'SampleMeta':
+    def from_dict(
+                  doc: Dict[str, Any]
+                 ) -> 'SampleMeta':
         """
         Создаёт объект SampleMeta из документа БД.
 
@@ -71,6 +73,8 @@ class SampleMeta:
                             fingerprint=doc.get("fingerprint", ""),
                             status=doc.get("status", "indexed"),
                             tasks=doc.get("tasks", {}),
+                            processing_dir=Path(doc.get("processing_dir", "")),
+                            result_dir=Path(doc.get("result_dir", "")),
                             changes=doc.get("changes", {}),
                             previous_version=doc.get("previous_version", ""),
                            )
@@ -82,6 +86,41 @@ class SampleMeta:
                                                      sample.fingerprint)
         
         return sample
+    
+    def to_dict(
+                self
+               ) -> Dict[str, Any]:
+        """
+        Конвертирует объект SampleMeta в словарь.
+        """
+        dict_obj = self.__dict__
+        keys2remove = []
+        for key in dict_obj:
+            if key.startswith("_"):
+                keys2remove.append(key)
+            
+            if key in ["processing_dir", "result_dir"]:
+                if dict_obj[key]:
+                    dict_obj[key] = dict_obj[key].as_posix()
+                else:
+                    dict_obj[key] = ""
+            
+            if key == "files":
+                if dict_obj[key]:
+                    dict_obj[key] = {file.as_posix():fingerprint for file,fingerprint in dict_obj[key].items()}
+                else:
+                    dict_obj[key] = {}
+            
+            if key == "batches":
+                if dict_obj[key]:
+                    dict_obj[key] = list(dict_obj[key])
+                else:
+                    dict_obj[key] = []
+        
+        for key in keys2remove:
+            del dict_obj[key]
+                    
+        return dict_obj
 
     def update_sample(
                       self,
