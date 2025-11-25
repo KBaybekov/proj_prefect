@@ -1,13 +1,11 @@
-import time
 import subprocess
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
-from ast import literal_eval 
-from typing import Any, Dict, IO, List, Optional, Set, Union
+from datetime import datetime
+from typing import Any, Dict, IO, List, Optional, Union
 from pathlib import Path
 from utils.logger import get_logger
 from shlex import split as shlex_split
-from classes.processing_task import ProcessingTask, TaskSlurmJob
+from classes.processing_task import ProcessingTask
 from json import loads as json_loads
 
 

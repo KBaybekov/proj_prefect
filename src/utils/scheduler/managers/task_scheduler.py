@@ -1,8 +1,7 @@
-from typing import Any, Dict, List, Optional, Set
-from prefect import flow, task
+from typing import Any, Dict, List, Optional
+from prefect import task
 from threading import Timer
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
 from utils.db.db import ConfigurableMongoDAO
 from utils.logger import get_logger
 from pathlib import Path
@@ -11,11 +10,8 @@ from scheduler import *
 from classes.pipeline import Pipeline
 from classes.processing_task import ProcessingTask
 from tools.script_renderer import ScriptRenderer
-import subprocess
-
 
 logger = get_logger(__name__)
-
 
 @dataclass(slots=True)
 class TaskScheduler:
@@ -39,10 +35,7 @@ class TaskScheduler:
     results2db:Dict[str, Dict[str, Any]] = field(default_factory=dict)
     # словарь данных для идёмпотентной загрузки в БД вида {collection: {doc_id: doc_data}
     tasks2db:Dict[str, ProcessingTask] = field(default_factory=dict)
-    timers:Dict[str, Optional[Timer]] = field(default={
-                                                       "slurm_poll": None,
-                                                       "db_update_timer": None
-                                                      })
+    db_timer:Optional[Timer] = field(default=None)
     
     def init_scheduler(
                        self
@@ -53,6 +46,18 @@ class TaskScheduler:
         self._load_pipelines()
         # Загрузка менеджера Slurm
         self._create_slurm_manager()
+        # Обновление данных планировщика, постановка новых заданий на обработку, выгрузка данных в БД
+        self._update()
+        # Удаляем конфиг для экономии памяти
+        self._cfg.clear()
+        return None
+
+    def _update(
+                self
+               ) -> None:
+        """
+        Работа с заданиями: актуализация, формирование, постановка в очередь, выгрузка данных в БД
+        """
         # Актуализация информации о запущенных заданиях
         self._actualize_tasks_data()
         # Формирование заданий на обработку
@@ -61,10 +66,8 @@ class TaskScheduler:
         self._put_tasks_in_queue()
         # Выгружаем данные в БД, если таковые имеются
         self._upload_data_to_db()
-        # Удаляем конфиг для экономии памяти
-        self._cfg.clear()
         return None
-        
+
     def _load_pipelines(
                         self
                        ) -> None:
@@ -134,9 +137,9 @@ class TaskScheduler:
                         logger.debug(f"Задание {task_id} помечено как завершённое.")
                         task._complete()
                         if task.status == 'completed':
-                             self.data2db['results'].update({
-                                        task.sample_meta.sample_id:task.data.output_data
-                                        })
+                             self.results2db.update({
+                                                     task.sample_meta.sample_id:task.data.output_data
+                                                    })
                         unqueued_tasks.append(task)
                 self._add_task_to_db_uploading(task)
 
@@ -146,8 +149,7 @@ class TaskScheduler:
         return None
 
     def _get_tasks_from_db(
-                           self,
-                           statuses: list
+                           self
                           ) -> Dict[str, ProcessingTask]:
         """
         Выгружает из БД список задач, запущенных ранее в обработку.
@@ -175,7 +177,7 @@ class TaskScheduler:
         """
         Добавляет задание в список на выгрузку в БД.
         """
-        self.data2db["tasks"][task.task_id] = task
+        self.tasks2db[task.task_id] = task
         logger.debug(f"Задание {task.task_id} добавлено в список на выгрузку в БД.")
         return None
 
@@ -364,30 +366,45 @@ class TaskScheduler:
     def _monitor_scheduler(
                            self
                           ) -> None:
-        def __check_new_data2fs():
-            self._upload_data_to_db()
-            if self.timers['db_update_timer']:
-                self.timers['db_update_timer'].start()
-        self.timers['db_update_timer'] = Timer(self.poll_interval, __check_new_data2fs)
-        self.timers['db_update_timer'].start()
+        """
+        Периодически проверяет изменения в выполнении заданий.
+        Выгружает изменения в БД.
+        """
+        def __check_new_data():
+            self._update()
+            if self.db_timer:
+                self.db_timer.start()
+        self.db_timer = Timer(self.poll_interval, __check_new_data)
+        self.db_timer.start()
 
     def _upload_data_to_db(self) -> None:
         """
         Выгружает накопленные изменения задач и результаты в БД.
         """
         def upload_data(
-                        collection:str,) -> None:
+                        collection:str,
+                        data:Dict[str, ProcessingTask|ResultMeta]
+                       ) -> None:
+            key_field = ""
+            if data:
+                if collection == "results":
+                    key_field = "sample_id"
+                elif collection == "tasks":
+                    key_field = "task_id"
+                for item_id, item in data.items():
+                    if item:
+                        self.dao.update_one(
+                                            collection=collection,
+                                            query={key_field: item_id},
+                                            doc=item.to_dict()
+                                           )
+            return None
+        
+        data2upload:Dict[str, dict] = {
+                                       "results":self.results2db,
+                                       "tasks":self.tasks2db
+                                      }
+        for collection, data_storage in data2upload.items(): 
+            upload_data(collection, data_storage)
+            data_storage.clear()
             
-        # Выгружаем в БД задания
-        docs = [task.to_dict() for task in self.tasks2db.values()]
-        try:
-            self.dao.upsert_many(
-                collection="tasks",
-                key="task_id",
-                docs=docs
-            )
-            logger.debug(f"Выгружено {len(docs)} задач в БД.")
-            self.data_to_db["tasks"].clear()
-        except Exception as e:
-            logger.error(f"Ошибка при выгрузке задач в БД: {e}")
-

@@ -1,8 +1,5 @@
 common:
   log: "./logs/watchdog.log"
-  # Здесь хранятся пути к файлам, использующимся в ВОТЧДОГЕ в качестве референсных 
-  reference_files:
-    pore_data: data/pore_data.yaml
 
 # DB INFO
 database:
