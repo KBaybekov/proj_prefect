@@ -9,17 +9,10 @@
 Использует Prefect для управления потоком выполнения и жизненным циклом сервисов.
 """
 from __future__ import annotations
-
-from pathlib import Path
 from typing import Any, Dict, Tuple
-
 from prefect import flow, task
 from prefect.cache_policies import NO_CACHE
-
-from utils.common import load_yaml, setup_parser
-from utils.db.db import ConfigurableMongoDAO
-from utils.filesystem.crawler.fs_crawler import FsCrawler
-from utils.scheduler.managers.task_scheduler import TaskScheduler
+from . import *
 from utils.logger import get_logger
 
 logger = get_logger(name=__name__)
