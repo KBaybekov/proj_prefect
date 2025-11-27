@@ -1,6 +1,8 @@
 # -*- coding: utf-8 -*-
 """
-Хранение метаданных исходных файлов
+Модуль предоставляет класс SourceFileMeta для сбора, хранения и управления
+метаданными отдельных файлов, поступающих в систему.
+Содержит информацию о расположении, состоянии, свойствах и принадлежности файла к батчу/образцу.
 """
 from utils.logger import get_logger
 from dataclasses import dataclass, field
@@ -15,40 +17,139 @@ logger = get_logger(name=__name__)
 @dataclass(slots=True)
 class SourceFileMeta:
     """
-    Класс для хранения метаданных исходных файлов.
+    Класс для хранения метаданных исходного файла.
+
+    Автоматически извлекает информацию из пути к файлу и его статуса в ФС.
+    Генерирует уникальный отпечаток (fingerprint) на основе ключевых свойств,
+    позволяющий отслеживать изменения содержимого и перемещения.
     """
     filepath: Path
+    """
+    Абсолютный путь к исходному файлу в файловой системе.
+    """
+
     symlink_dir: Path
+    """
+    Директория, в которой будет создан симлинк на файл.
+    Определяется на основе расширения файла.
+    """
+
     name: str  = field(default_factory=str)
+    """
+    Имя симлинка (обычно совпадает с именем файла).
+    Устанавливается при вызове finalize().
+    """
+
     directory: Path = field(default_factory=Path)
+    """
+    Директория, в которой находится исходный файл.
+    Заполняется из filepath при инициализации.
+    """
+
     symlink: Path = field(default_factory=Path)
+    """
+    Путь к симлинку, создаваемому для файла.
+    Формат: {symlink_dir}/{batch}:{sample}:{filename}.
+    """
+
     extension: str = field(default_factory=str)
+    """
+    Расширение файла без точек (например, 'fastq', 'fast5').
+    Определяется из суффиксов пути.
+    """
+
     basename:str = field(default_factory=str)
-    quality_pass: bool = field(default_factory=bool)
+    """
+    Имя файла без расширения (например, 'sample_001_R1').
+    """
+
     batch: str = field(default_factory=str)
+    """
+    Имя батча, к которому принадлежит файл.
+    Извлекается из структуры пути (обычно третья часть с конца).
+    """
+
     sample: str = field(default_factory=str)
+    """
+    Имя образца, к которому принадлежит файл.
+    Извлекается из структуры пути (обычно четвёртая часть с конца).
+    """
+
     size: int = field(default=0)
+    """
+    Размер файла в байтах.
+    """
+
     created: Optional[datetime] = field(default=None)
+    """
+    Дата и время создания файла (время изменения inode).
+    Хранится в UTC.
+    """
+
     modified: Optional[datetime] = field(default=None)
+    """
+    Дата и время последнего изменения содержимого файла.
+    Хранится в UTC.
+    """
+
     dev: int = field(default=0)
+    """
+    Идентификатор устройства (dev), на котором находится файл.
+    Часть уникального ключа файла в ФС.
+    """
+
     ino:  int = field(default=0)
+    """
+    Номер inode файла.
+    Часть уникального ключа файла в ФС.
+    """
+
     nlink: int = field(default=0)
+    """
+    Количество жёстких ссылок на файл.
+    """
+
     status: str = field(default_factory=str)
-    # Список изменений в файле по сравнению с предыдущей версией (если есть)
+    """
+    Текущий статус файла. Возможные значения:
+    - 'indexed' — проиндексирован
+    - 'deprecated' — устарел
+    - 'deleted' — удалён
+    """
+
     changes: Dict[str, int | datetime] = field(default_factory=dict)
-    # Отпечаток предыдущей версии файла (если есть)
+    """
+    Словарь изменений по сравнению с предыдущей версией файла.
+    Ключ — название свойства, значение — новое значение.
+    """
+
     previous_version: str = field(default_factory=str)
+    """
+    Отпечаток предыдущей версии файла.
+    Используется для установки связей между версиями и пометки старой версии как устаревшей.
+    """
+
     fingerprint: str = field(default_factory=str)
+    """
+    Криптографический отпечаток файла, вычисляемый на основе:
+    - размера
+    - dev
+    - ino
+    - времени модификации
+    Используется для проверки целостности и отслеживания изменений.
+    """
 
     @staticmethod
     def from_dict(
                   doc: Dict[str, Any]
                  ) -> 'SourceFileMeta':
         """
-        Создаёт объект BatchMeta из документа БД.
+        Создаёт экземпляр SourceFileMeta из документа MongoDB.
 
-        :param doc: Документ из коллекции 'batches' в MongoDB.
-        :return: Объект BatchMeta.
+        :param doc: Словарь с данными из коллекции 'files'.
+        :type doc: Dict[str, Any]
+        :return: Инициализированный объект SourceFileMeta.
+        :rtype: SourceFileMeta
         """
         # Инициализируем основные поля SourceFileMeta
         return SourceFileMeta(
@@ -59,7 +160,6 @@ class SourceFileMeta:
                               symlink=Path(doc.get("symlink", "")),
                               extension=doc.get("extension", ""),
                               basename=doc.get("basename", ""),
-                              quality_pass=doc.get("quality_pass", False),
                               batch=doc.get("batch", ""),
                               sample=doc.get("sample", ""),
                               size=doc.get("size", 0),
@@ -78,7 +178,12 @@ class SourceFileMeta:
                 self
                ) -> Dict[str, Any]:
         """
-        Конвертирует объект SourceFileMeta в словарь.
+        Преобразует объект SourceFileMeta в словарь для сохранения в MongoDB.
+
+        Выполняет сериализацию полей Path в строки с помощью .as_posix().
+
+        :return: Сериализованный словарь с метаданными файла.
+        :rtype: Dict[str, Any]
         """
         dict_obj = self.__dict__
         for key in [
@@ -96,6 +201,10 @@ class SourceFileMeta:
     def __post_init__(
                       self
                      ) -> None :
+        """
+        Выполняется после инициализации экземпляра.
+        Извлекает метаданные из пути к файлу и статуса в ФС.
+        """
         # Получаем данные по принадлежности файла
         self.batch = '_'.join(str(self.filepath.parts[-3]).split('_')[3:])
         self.sample = self.filepath.parts[-4]
@@ -126,21 +235,11 @@ class SourceFileMeta:
     def finalize(
                  self
                 ) -> None :
-        def _is_qc_pass(file: Path) -> bool:
-            """
-            Принимает полный путь к файлу и возвращает True, если:
-            - в имени файла есть "pass";
-            - в имени папки файла есть "pass";
-            - ни в имени файла, ни в имени папки файла нет "pass"/"fail"/"skip".
-            Возвращает False в случае наличия "fail"/"skip"
-            """
-            for name in [file.name, file.parent.name]:
-                if "_pass" in name:
-                    return True
-                elif any([fail_flag in name for fail_flag in ['_fail', '_skip']]):
-                    return False
-            return True
-        
+        """
+        Финализирует метаданные файла: определяет расширение, базовое имя, качество и устанавливает статус.
+
+        Должен вызываться перед сохранением в БД.
+        """
         # Получаем данные по частям пути файла
         # Имя файла без директорий и расширения
         self.basename = self.filepath.name.split('.')[0]
@@ -150,7 +249,6 @@ class SourceFileMeta:
         self.extension = next(f.lower().removeprefix('.')
                                for f in raw_extensions
                                if f in ['.fast5', '.fastq', '.fq', '.pod5'])
-        self.quality_pass = _is_qc_pass(self.filepath)
         self.name = self.symlink.name
         self.status = 'indexed'
         return None
