@@ -1,6 +1,13 @@
 # -*- coding: utf-8 -*-
 """
 Работа с файловой системой и сохранением метаданных объектов в ней в БД
+
+Модуль FsCrawler обеспечивает:
+- Мониторинг файловой системы с помощью watchdog
+- Синхронизацию файлов, батчей и образцов с MongoDB
+- Управление симлинками
+- Формирование и обновление метаданных
+- Периодическую и инициализационную индексацию
 """
 from __future__ import annotations
 from . import get_files_by_extension_in_dir_tree, remove_symlink
@@ -21,8 +28,7 @@ from typing import (
                     Tuple,
                     Set,
                     Any,
-                    Optional,
-                    Union
+                    Optional
                    )
 from watchdog.observers import Observer
 from watchdog.events import FileCreatedEvent
@@ -31,7 +37,15 @@ logger = get_logger(__name__)
 
 class FsCrawler():
     """
-    Класс для работы с файловой системой и сохранением данных объектов в ней в БД
+    Класс для мониторинга файловой системы и синхронизации метаданных файлов, батчей и образцов с MongoDB.
+
+    Основные функции:
+    - Первичная и периодическая индексация файлов
+    - Создание и обновление симлинков
+    - Формирование метаданных (батчи, образцы)
+    - Отслеживание изменений (создание, перемещение, удаление)
+    - Периодическая и дебаунс-выгрузка данных в БД
+    - Потокобезопасная работа с данными
     """
     
     def __init__(
@@ -40,12 +54,12 @@ class FsCrawler():
                  dao: ConfigurableMongoDAO
                 ):
         """
-        Инициализация FsCrawler
-        
-        Args:
-            crawler_cfg: словарь с конфигурацией
-            dao: Объект DAO для взаимодействия с БД
+        Инициализирует FsCrawler с конфигурацией и DAO.
 
+        :param crawler_cfg: Конфигурация: пути, расширения, тайминги.
+        :type crawler_cfg: Dict[str, Any]
+        :param dao: Объект для взаимодействия с MongoDB.
+        :type dao: ConfigurableMongoDAO
         """
         self._cfg: Dict[str, Any] = crawler_cfg
         self.dao: ConfigurableMongoDAO = dao
@@ -114,7 +128,7 @@ class FsCrawler():
                       self
                      ) -> None:
         """
-        Инициализация наблюдателя и индексация файлов
+        Инициализирует директории, параметры и выполняет первичную индексацию файлов.
         """
         def __get_dir_obj(
                           string:str,
@@ -154,8 +168,18 @@ class FsCrawler():
                                    additional_fields:Optional[List[str]] = None
                                   ) -> Dict[str, str|int|datetime]:
         """
-        Поиск актуального (status != "deprecated"/"deleted") файла в БД по meta_id в поле meta_field
-        Возвращает словарь со свойствами 'filepath', 'size', 'dev', 'ino', 'modified'
+        Извлекает из БД информацию о файле по полю и идентификатору.
+
+        Ищет актуальные (не удалённые/не устаревшие) записи.
+
+        :param meta_field: Поле, по которому искать (например, 'symlink', 'batch').
+        :type meta_field: str
+        :param meta_id: Значение поля для поиска.
+        :type meta_id: str
+        :param additional_fields: Дополнительные поля для включения в результат.
+        :type additional_fields: Optional[List[str]]
+        :return: Словарь с запрашиваемыми свойствами файла.
+        :rtype: Dict[str, Union[str, int, datetime]]
         """
         requested_properties = self.unique_file_properties
         if additional_fields:
@@ -178,7 +202,7 @@ class FsCrawler():
                       self
                      ) -> None:
         """
-        Запускает периодическую проверку изменений в файлах.
+        Запускает периодический мониторинг изменений в файловой системе.
         """
         # Переходим в режим мониторинга: периодически проверяем коллекции с данными на загрузку в БД на предмет... данных
         logger.info("Запуск мониторинга файловой системы...")
@@ -186,9 +210,9 @@ class FsCrawler():
 
     def index_files(self) -> None:
         """
-        Первичная индексация файлов в указанной директории в потокобезопасном режиме.
-        Returns:
-            Словарь с индексированными данными
+        Выполняет первичную индексацию файлов в source_dir.
+
+        Потокобезопасно собирает метаданные, создаёт симлинки, синхронизирует с БД.
         """
         logger.info(f"Начата первичная индексация директории: {self.source_dir}")
         
@@ -205,9 +229,12 @@ class FsCrawler():
 
     def index_fs_files(self) -> None:
         """
-        Делает первичный обход папок с исходными данными и симлинками к ним,
-        собирает метаданные всех файлов с указанными расширениями в виде списка SourceFileMeta.
-        В случае отсутствия симлинка на исходный файл - создаёт его
+        Выполняет первичный обход файловой системы и сопоставление с данными из БД.
+
+        - Находит файлы по расширениям
+        - Создаёт симлинки
+        - Обрабатывает новые, изменённые и удалённые файлы
+        - Формирует метаданные батчей и образцов
         """
         # Получаем словарь вида "симлинк:отпечаток, файловый путь, размер, dev, ino, modified"
         # для файлов, проиндексированных в БД     
@@ -279,7 +306,6 @@ class FsCrawler():
                                                                              'batch',
                                                                              'sample',
                                                                              'fingerprint',
-                                                                             'quality_pass',
                                                                              'extension'                                                                                   
                                                                             ]
                                                          )
@@ -293,7 +319,12 @@ class FsCrawler():
         self._fs_changes2db(stage='init')
 
     def _get_db_files_meta(self) -> Dict[str, Dict[str, datetime | str | int | None]]:
-        """Получение списка актуальных файлов из БД в виде словаря {симлинк файла: {свойства}}"""
+        """
+        Получает из БД метаданные всех актуальных файлов, индексированных по симлинку.
+
+        :return: Словарь вида {симлинк: {свойства}}.
+        :rtype: Dict[str, Dict[str, Union[datetime, str, int, None]]]
+        """
         properties = {
                       k:1 for k in
                       self.unique_file_properties
@@ -313,7 +344,17 @@ class FsCrawler():
                 }
     
     def _monitor_fs(self) -> None:
+        """
+        Запускает таймер для периодической проверки и выгрузки изменений в БД.
+        """
         def __check_new_data2fs():
+            """
+            Внутренняя функция, вызываемая таймером.
+
+            Проверяет наличие данных для выгрузки во всех буферах и при необходимости
+            запускает процесс синхронизации с БД.
+            После выполнения перезапускает таймер.
+            """
             if any([getattr(self, collection) for collection in self.db_collections4storing.keys()]):
                 self._fs_changes2db(stage='monitoring')
             if self.timers['db_update_timer']:
@@ -327,15 +368,16 @@ class FsCrawler():
                           obj_id:str
                          ) -> BatchMeta|SampleMeta:
         """
-        Возвращает метаданные батча/образца.
-        - Если объект был ранее изменён (FsCrawler.new_indexed_*) — возвращаем его
-        - Если объект не был изменён, но выгружен из БД (FsCrawler.loaded_*) — возвращаем этот экземпляр
-        - Если объект не был выгружен из БД — выгружаем, сохраняем в кэш (FsCrawler.loaded_*) и возвращаем этот экземпляр
-        - Если объект до этого не существовал — создаём его, сохраняем в кэш и возвращаем
+        Получает объект метаданных (батч/образец) из кэша или БД, создаёт новый при необходимости.
 
-        :param obj_type: тип объекта
-        :param obj_id: идентификатор объекта
-        :return: объект BatchMeta|SampleMeta
+        Использует трёхуровневый поиск: обновлённые → загруженные → из БД → новый.
+
+        :param obj_type: Тип объекта: 'batch' или 'sample'.
+        :type obj_type: str
+        :param obj_id: Имя объекта.
+        :type obj_id: str
+        :return: Экземпляр BatchMeta или SampleMeta.
+        :rtype: Union[BatchMeta, SampleMeta]
         """
         meta_obj:BatchMeta|SampleMeta
         obj_config = {
@@ -407,18 +449,16 @@ class FsCrawler():
                               meta_file_dict:Optional[Dict[str, str|int|datetime]] = None
                              ) -> None:
         """
-        Формирует метаданные батча/образца.
-        - Если объект был ранее изменён — обновляем его
-        - Если объект не был изменён, но выгружен из БД — обновляем этот экземпляр
-        - Если объект не был выгружен из БД — выгружаем, сохраняем в кэш и работаем с ним
-        - Если объект до этого не существовал — создаём его
-        В зависимости от типа обновления добавляет, изменяет или удаляет метаданные файла из меты объекта.
-        Если объект - батч, то после обновления аналогичные действия проводятся и с образцами, относящимися к батчу.
-        
-        :param meta_file: объект SourceFileMeta
-        :param update_type: тип обновления
-        :param obj_type: тип объекта
-        :return: словарь батчей
+        Обновляет метаданные батча и связанного образца на основе изменения файла.
+
+        Выполняет создание, обновление или удаление записи о файле.
+
+        :param update_type: Тип изменения: 'add', 'move', 'delete'.
+        :type update_type: str
+        :param meta_file: Объект метаданных файла (если доступен).
+        :type meta_file: Optional[SourceFileMeta]
+        :param meta_file_dict: Словарь с метаданными файла (если meta_file отсутствует).
+        :type meta_file_dict: Optional[Dict[str, Union[str, int, datetime]]]
         """
         meta_batch: BatchMeta
         file_id:Path = Path()
@@ -456,7 +496,12 @@ class FsCrawler():
                 self.new_indexed_samples[meta_sample.name] = meta_sample
         
     def _complete_batch_metadata(self, meta_batch:BatchMeta) -> None:
-        # Создаём отпечатки для каждого батча и определяем статус
+        """
+        Финализирует метаданные батча (например, формирует отпечаток).
+
+        :param meta_batch: Объект метаданных батча.
+        :type meta_batch: BatchMeta
+        """
         meta_batch.finalize()
 
     def _fs_changes2db(
@@ -464,15 +509,43 @@ class FsCrawler():
                        stage:str
                       ) -> None:
         """
-        Записывает в БД данные из словаря self.new_indexed_*.
-        В зависимости от stage выполняет дебаунс (ожидает, пока загружаемые коллекции 
-        не будут определённое время неизменными)
-        """
+    Осуществляет выгрузку накопленных изменений из буферов в MongoDB с механизмом дебаунса.
+
+    В зависимости от этапа выполнения (`init` или `monitoring`) определяет стратегию выгрузки:
+    - На этапе `init` (первоначальная индексация) — отправляет данные немедленно.
+    - На этапе `monitoring` (фоновый мониторинг) — применяет дебаунс, ожидая `db_debounce` секунд
+      после последнего изменения, чтобы избежать частых записей при всплеске активности в ФС.
+
+    Метод обрабатывает следующие типы изменений:
+    - Новые файлы, батчи, образцы — добавляются как новые документы.
+    - Перемещённые файлы — обновляются по симлинку.
+    - Удалённые файлы — помечаются как `deleted`.
+    - Устаревшие версии объектов — помечаются как `deprecated`.
+
+    Использует потокобезопасные блокировки для предотвращения конфликтов при одновременной записи.
+
+    :param stage: Этап работы FsCrawler.
+                  Допустимые значения:
+                  - 'init' — первичная индексация (запись без задержки),
+                  - 'monitoring' — фоновый мониторинг (с дебаунсом),
+                  - 'flush_on_shutdown' — принудительная выгрузка при остановке.
+    :type stage: str
+    """
         def __prepare_for_transition(
                                      stage:str,
                                      collection:str,
                                      db_collection:str 
                                     ):
+            """
+            Подготавливает данные из указанного буфера к выгрузке.
+
+            :param stage: Текущий этап работы.
+            :type stage: str
+            :param collection: Имя буфера (атрибут FsCrawler).
+            :type collection: str
+            :param db_collection: Целевая коллекция в MongoDB.
+            :type db_collection: str
+            """
             data:Dict[str, Path|SourceFileMeta|BatchMeta|SampleMeta|datetime] = getattr(self, collection, {})
             if data:
                 for meta in data.values():
@@ -510,6 +583,18 @@ class FsCrawler():
                                       db_collection:str,
                                       data:Dict[str, Path|SourceFileMeta|BatchMeta|SampleMeta|datetime]
                                      ) -> None:
+            """
+            Выполняет фактическую запись данных в MongoDB.
+
+            Операция выполняется под блокировкой для потокобезопасности.
+
+            :param collection: Имя буфера.
+            :type collection: str
+            :param db_collection: Целевая коллекция в БД.
+            :type db_collection: str
+            :param data: Данные для выгрузки.
+            :type data: Dict[str, Union[Path, ...]]
+            """
             data_lock = self.locks[collection]
             # блокируем запись в коллекцию на время записи данных в БД
             with data_lock:
@@ -566,11 +651,7 @@ class FsCrawler():
                      self
                     ) -> None:
         """
-        Корректно останавливает FsCrawler:
-        - прекращает наблюдение за файловой системой
-        - отменяет все отложенные таймеры
-        - выполняет немедленную запись накопленных изменений в БД (если есть)
-        - дожидается завершения фоновых задач
+        Корректно останавливает FsCrawler: останавливает наблюдение, отменяет таймеры, выгружает данные.
         """
         logger.info("Остановка FsCrawler...")
 

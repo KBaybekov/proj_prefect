@@ -1,9 +1,13 @@
-# src/utils/filesystem/metas/result_meta.py
+# -*- coding: utf-8 -*-
+"""
+Модуль для хранения и управления метаданными результатов выполнения пайплайнов.
+
+Класс ResultMeta предназначен для сбора, сериализации и хранения результатов
+анализа образцов, полученных в ходе выполнения различных биоинформатических пайплайнов.
+"""
 from dataclasses import dataclass, field
 from datetime import datetime
-from hashlib import blake2s as hashlib_blake2s
-from pathlib import Path
-from typing import Any, Dict, Optional, Set
+from typing import Any, Dict, Optional
 from utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -12,27 +16,70 @@ logger = get_logger(__name__)
 @dataclass(slots=True)
 class ResultMeta:
     """
-    Динамический класс для хранения результатов выполнения пайплайнов.
-    Ключ: sample_id.
-    Коллекция: 'results'
+    Класс для хранения результатов выполнения пайплайнов по образцу.
+
+    Используется для агрегирования выходных данных, метрик и статусов
+    из различных пайплайнов (например, QC, сборка, аннотация) в единую структуру.
+    Хранится в коллекции 'results' базы данных, ключ — sample_id.
+
+    Поддерживает версионирование через fingerprint и отслеживание времени обновления.
     """
-    name: str  # Имя образца
-    fingerprint: str  # fingerprint образца
-    sample_id: str  # Идентификатор образца
-    # Динамические результаты по пайплайнам
-    # Формат: {"pipeline_id": {"metric": value, "outputs": [...], "status": "ok", ...}}
+    name: str
+    """
+    Человекочитаемое имя образца (например, 'Sample_001').
+    """
+
+    fingerprint: str
+    """
+    Криптографический отпечаток (хэш) образца, вычисляемый на основе его данных.
+    Используется для проверки целостности и идентификации версий.
+    """
+
+    sample_id: str
+    """
+    Уникальный идентификатор образца в системе.
+    Используется как ключ для поиска и агрегации результатов.
+    """
+
     results: Dict[str, Dict[str, Any]] = field(default_factory=dict)
-    # Дата создания
+    """
+    Словарь результатов выполнения пайплайнов.
+    
+    Формат: 
+    {
+        "pipeline_name": {
+            "status": "completed",          # Статус выполнения
+            "metrics": {"depth": 50, ...},  # Ключевые метрики
+            "outputs": [...],               # Пути к выходным файлам
+            "version": "1.0",               # Версия пайплайна
+            # ... любые другие данные пайплайна
+        },
+        ...
+    }
+    """
+
     created: Optional[datetime] = field(default=None)
-    # Дата последнего обновления
+    """
+    Дата и время создания записи (при создании первого задания с образцом).
+    """
+
     modified: Optional[datetime] = field(default=None)
+    """
+    Дата и время последнего обновления записи.
+    Обновляется при добавлении результатов нового пайплайна или перезапуске существующего.
+    """
 
     @staticmethod
     def from_dict(
                   doc: Dict[str, Any]
                  ) -> 'ResultMeta':
         """
-        Восстанавливает объект из документа БД.
+        Создаёт экземпляр ResultMeta из документа MongoDB.
+
+        :param doc: Словарь с данными из коллекции 'results'.
+        :type doc: Dict[str, Any]
+        :return: Инициализированный объект ResultMeta.
+        :rtype: ResultMeta
         """
         return ResultMeta(
                           name=doc.get("name", ""),
@@ -47,7 +94,10 @@ class ResultMeta:
                 self
                ) -> Dict[str, Any]:
         """
-        Конвертирует объект SourceFileMeta в словарь.
+        Преобразует объект ResultMeta в словарь для сохранения в MongoDB.
+
+        :return: Сериализованный словарь со всеми полями объекта.
+        :rtype: Dict[str, Any]
         """
         dict_obj = self.__dict__
         return dict_obj

@@ -1,6 +1,13 @@
 # -*- coding: utf-8 -*-
 """
 Хранение метаданных образцов
+
+Модуль предоставляет класс SampleMeta для сбора, хранения и управления
+метаданными образцов (семплов), включая:
+- Связь с файлами и батчами
+- Агрегированную информацию о состоянии и составе
+- Интеграцию с системой заданий (TaskScheduler)
+- Механизмы версионирования и отслеживания изменений
 """
 from . import update_file_in_meta, min_datetime, max_datetime, update_fingerprint, generate_final_fingerprint
 from .source_file_meta import SourceFileMeta
@@ -18,45 +25,116 @@ logger = get_logger(name=__name__)
 @dataclass(slots=True)
 class SampleMeta:
     """
-    Класс для хранения метаданных образцов.
+    Класс для хранения и управления метаданными образца (семпла).
+
+    Объединяет данные из нескольких батчей и файлов, агрегирует их
+    и предоставляет единый интерфейс для доступа к результатам анализа.
+    Служит основой для запуска пайплайнов и управления жизненным циклом образца.
     """
     # Определяем при инициализации 
     name: str
+    """
+    Имя образца (например, 'Sample_001').
+    Может использоваться как база для формирования sample_id.
+    """
+
     sample_id: str = field(default_factory=str)
+    """
+    Уникальный идентификатор образца, формируемый как {name}_{fingerprint[:6]}.
+    Используется как ключ в БД и для построения путей к данным.
+    """
+
     files: Dict[Path, str] = field(default_factory=dict)
-    # Наполняем после прохода по всем файлам
+    """
+    Словарь файлов, принадлежащих образцу: ключ — симлинк, значение — отпечаток.
+    Включает все файлы из всех батчей, связанных с этим образцом.
+    """
+
     batches: Set[str] = field(default_factory=set)
+    """
+    Множество имён батчей, содержащих файлы этого образца.
+    Обновляется при добавлении/удалении батчей.
+    """
+
     size: int = 0
-    # Определяем по метаданным батчей, в которых присутствует образец
+    """
+    Общий размер всех файлов образца в байтах.
+    Обновляется при добавлении или удалении файлов.
+    """
+
     created: Optional[datetime] = field(default=None)
+    """
+    Дата создания образца (на основе самого старого файла или батча).
+    """
+
     modified: Optional[datetime] = field(default=None)
-    # Определяем по ходу наполнения образца файлами
+    """
+    Дата последнего изменения образца (на основе самого нового файла или батча).
+    Обновляется при любых изменениях.
+    """
+
     fingerprint: str = field(default_factory=str)
-    # внутренний хэш-аккумулятор для fingerprint
+    """
+    Итоговый отпечаток образца, вычисляемый из отпечатков всех файлов.
+    Генерируется при вызове finalize().
+    """
+
     _fingerprint: hashlib_blake2s = field(default_factory=hashlib_blake2s)
+    """
+    Внутренний аккумулятор хэшей для построения итогового fingerprint.
+    Позволяет инкрементально добавлять отпечатки файлов.
+    """
         
-    # данные TaskScheduler
-    # словарь вида {пайплайн: {id задания: статус}}
     tasks: Dict[str, Dict[str, str]] = field(default_factory=dict)
+    """
+    Словарь заданий, связанных с образцом.
+    Формат: {"pipeline_name": {"task_id": "status"}}.
+    Используется для отслеживания прогресса анализа.
+    """
+
     processing_dir: Path = field(default_factory=Path)
+    """
+    Путь к директории обработки образца.
+    Формируется как: {base_processing_dir}/{name}/{fingerprint[:6]}.
+    """
+
     result_dir: Path = field(default_factory=Path)
-    
-    # История изменений
+    """
+    Путь к директории результатов анализа образца.
+    Формируется как: {base_result_dir}/{name}/{fingerprint[:6]}.
+    """
+
     status: str = field(default_factory=str)
-    # список изменений батчей и входящих в них файлов
+    """
+    Текущий статус образца. Возможные значения:
+    - 'indexed' — проиндексирован и актуален
+    - 'deprecated' — устарел (например, все файлы удалены)
+    - 'deleted' — помечен на удаление
+    """
+
     changes: Dict[str, Dict[Path, Dict[str, int | datetime]]] = field(default_factory=dict)
-    # Отпечаток предыдущей версии батча (если есть)
+    """
+    История изменений по батчам: {batch_name: {file_path: {property: value}}}.
+    Используется для отслеживания разницы между версиями.
+    """
+
     previous_version: str = field(default_factory=str)
-    
+    """
+    Отпечаток предыдущей версии образца.
+    Позволяет установить связи между версиями и пометить старую как устаревшую.
+    """
+
     @staticmethod
     def from_dict(
                   doc: Dict[str, Any]
                  ) -> 'SampleMeta':
         """
-        Создаёт объект SampleMeta из документа БД.
+        Создаёт экземпляр SampleMeta из документа MongoDB.
 
-        :param doc: Документ из коллекции 'samples' в MongoDB.
-        :return: Объект SampleMeta.
+        :param doc: Словарь с данными из коллекции 'samples'.
+        :type doc: Dict[str, Any]
+        :return: Инициализированный объект SampleMeta.
+        :rtype: SampleMeta
         """
         # Инициализируем основные поля SampleMeta
         sample = SampleMeta(
@@ -91,7 +169,12 @@ class SampleMeta:
                 self
                ) -> Dict[str, Any]:
         """
-        Конвертирует объект SampleMeta в словарь.
+        Преобразует объект SampleMeta в словарь для сохранения в MongoDB.
+
+        Выполняет сериализацию сложных типов: Path → str, set → list, убирает служебные поля.
+
+        :return: Сериализованный словарь с метаданными образца.
+        :rtype: Dict[str, Any]
         """
         dict_obj = self.__dict__
         keys2remove = []
@@ -131,16 +214,23 @@ class SampleMeta:
                       file_diffs:dict={}
                      ) -> bool:
         """
-        Обновляет объект SampleMeta:
-        - если файл был добавлен — проводит процедуру добавления меты файла в образец
-        - если файл был удалён — удаляет его метаданные из образца
-        - если файл был изменён — обновляет его метаданные в образце
-        Возвращает True, если образец был изменён
+        Обновляет метаданные образца в ответ на изменение файла.
 
-        :param file_path: путь к файлу
-        :param file_diffs: словарь с изменениями файла
-        :param file_meta: объект SourceFileMeta
-        :return: True, если образец был изменён
+        Выполняет добавление, удаление или модификацию файла.
+        Возвращает True, если состояние образца изменилось.
+
+        :param change_type: Тип изменения: 'add', 'delete', 'modify'.
+        :type change_type: str
+        :param batch_meta: Ссылка на метаданные батча, к которому относится файл.
+        :type batch_meta: BatchMeta
+        :param file_meta: Объект метаданных файла (если доступен).
+        :type file_meta: Optional[SourceFileMeta]
+        :param file_meta_dict: Словарь с метаданными файла (если file_meta недоступен).
+        :type file_meta_dict: Optional[Dict[str, Union[str, int, datetime]]]
+        :param file_diffs: Словарь с описанием изменений файла.
+        :type file_diffs: dict
+        :return: True, если образец был изменён; False — в противном случае.
+        :rtype: bool
         """
         sample_changed: bool = False
         logger.debug(f"Обновление образца {self.name}")
@@ -172,10 +262,21 @@ class SampleMeta:
                                                      )
         return sample_changed
 
-    def add_batch2sample(self,
+    def add_batch2sample(
+                         self,
                          batch_meta: BatchMeta,
                          file_meta: SourceFileMeta
                         ) -> bool:
+        """
+        Добавляет батч в список батчей образца и обновляет агрегированные метаданные.
+
+        :param batch_meta: Метаданные батча.
+        :type batch_meta: BatchMeta
+        :param file_meta: Метаданные файла, добавляемого из батча.
+        :type file_meta: SourceFileMeta
+        :return: True, если образец был изменён.
+        :rtype: bool
+        """
         sample_changed: bool = False
         if batch_meta.name not in self.batches:
         # Обновляем даты последних изменения и создания батча
@@ -196,7 +297,12 @@ class SampleMeta:
                         file_meta:SourceFileMeta
                        ) -> bool:
         """
-        Добавляет файл в набор файлов.
+        Добавляет файл в образец.
+
+        :param file_meta: Метаданные файла.
+        :type file_meta: SourceFileMeta
+        :return: True, если файл был успешно добавлен; False — если уже существует.
+        :rtype: bool
         """
 
         # Добавляем, если файл не добавлен ранее
@@ -210,7 +316,18 @@ class SampleMeta:
             return True
         return False
 
-    def edit_file_meta(self, edit_dict: Dict[Path, Dict[str, List[Any]]]) -> bool:
+    def edit_file_meta(
+                       self,
+                       edit_dict: Dict[Path, Dict[str, List[Any]]]
+                      ) -> bool:
+        """
+        Обновляет метаданные файлов в образце (размер, дату и т.д.).
+
+        :param edit_dict: Словарь изменений.
+        :type edit_dict: Dict[Path, Dict[str, List[Any]]]
+        :return: True, если образец был изменён.
+        :rtype: bool
+        """
         sample_changed: bool = False
         # проходим по словарям изменений
         for mod_data in edit_dict.values():
@@ -240,6 +357,14 @@ class SampleMeta:
                                 self,
                                 file_meta_dict:Dict[str, str|int|datetime|bool]
                                ) -> bool:
+        """
+        Удаляет файл из образца.
+
+        :param file_meta_dict: Словарь с метаданными удаляемого файла.
+        :type file_meta_dict: Dict[str, Union[str, int, datetime, bool]]
+        :return: True, если файл был удалён; False — если не найден.
+        :rtype: bool
+        """
         file_removed: bool = False
         if file_meta_dict:
             file_id = str(file_meta_dict['symlink'])
@@ -272,6 +397,14 @@ class SampleMeta:
                  processing_dir:Path,
                  result_dir:Path 
                 ):
+        """
+        Финализирует метаданные образца: вычисляет отпечаток и формирует идентификаторы.
+
+        :param processing_dir: Базовая директория для обработки.
+        :type processing_dir: Path
+        :param result_dir: Базовая директория для результатов.
+        :type result_dir: Path
+        """
         self.fingerprint = generate_final_fingerprint(self._fingerprint)
         fingerprint_short = self.fingerprint[:6]
         self.processing_dir = (processing_dir / self.name / fingerprint_short).resolve()

@@ -1,6 +1,8 @@
 # -*- coding: utf-8 -*-
 """
-MongoDB helpers
+Модуль предоставляет вспомогательные функции и класс ConfigurableMongoDAO
+для удобной и безопасной работы с MongoDB: сериализацию, нормализацию данных,
+управление соединением, работу с коллекциями и индексами.
 """
 
 from __future__ import annotations
@@ -21,18 +23,36 @@ logger = get_logger(name=__name__)
 
 
 def _to_utc(dt: datetime) -> datetime:
+    """
+    Преобразует объект datetime в UTC-зону.
+
+    Если объект не имеет информации о временной зоне — добавляет UTC.
+    Если имеет — конвертирует в UTC.
+
+    :param dt: Исходный объект datetime.
+    :type dt: datetime
+    :return: Объект datetime с временной зоной UTC.
+    :rtype: datetime
+    """
     if dt.tzinfo is None:
         return dt.replace(tzinfo=timezone.utc)
     return dt.astimezone(timezone.utc)
 
 
 def _normalize(value: Any) -> Any:
-    """Рекурсивная нормализация значений для BSON:
-    - dataclass → dict (с дальнейшей рекурсией)
-    - dict/list/tuple/set → рекурсивно нормализуем элементы
+    """
+    Рекурсивно нормализует значение для совместимости с BSON (MongoDB).
+
+    Поддерживаемые преобразования:
+    - dataclass → dict (с рекурсивной нормализацией)
     - Path → POSIX-строка
-    - datetime → UTC (через _to_utc)
-    Прочие типы возвращаются как есть.
+    - datetime → преобразуется в UTC
+    - dict, list, tuple, set → рекурсивная нормализация элементов
+
+    :param value: Входное значение любого типа.
+    :type value: Any
+    :return: Нормализованное значение, пригодное для сохранения в MongoDB.
+    :rtype: Any
     """
     if is_dataclass(value):
         # Преобразуем dataclass в словарь и продолжаем рекурсивную нормализацию
@@ -54,9 +74,22 @@ def _normalize(value: Any) -> Any:
     return value
 
 def to_mongo(obj: Any, *, keep_empty: bool = True) -> Any:
-    """Рекурсивно превращает датаклассы/сложные объекты в JSON-совместимые структуры для PyMongo.
-    - Сохраняет пустые dict/list, если keep_empty=True.
-    - Преобразует Path→str, set→list, Enum→.value.
+    """
+    Преобразует Python-объекты в формат, пригодный для сохранения в MongoDB.
+
+    Поддерживает:
+    - dataclass → dict
+    - Enum → .value
+    - Path → POSIX-строка
+    - datetime → с сохранением временной зоны
+    - Рекурсивную обработку вложенных структур
+
+    :param obj: Объект для сериализации.
+    :type obj: Any
+    :param keep_empty: Сохранять ли пустые словари и списки.
+    :type keep_empty: bool
+    :return: JSON-совместимая структура данных.
+    :rtype: Any
     """
     # dataclass → dict (только публичные поля)
     if is_dataclass(obj):
@@ -92,16 +125,53 @@ def to_mongo(obj: Any, *, keep_empty: bool = True) -> Any:
 
 @dataclass
 class ConfigurableMongoDAO:
-    """Универсальный DAO с динамическими коллекциями и ensure_indexes()."""
-    _cfg: Dict[str, Any] 
+    """
+    Универсальный DAO для работы с MongoDB с динамическим управлением коллекциями и индексами.
+
+    Поддерживает:
+    - Подключение к MongoDB с аутентификацией
+    - Автоматическое создание коллекций по конфигурации
+    - Идемпотентное создание индексов
+    - Операции CRUD с автоматической сериализацией
+    - Периодический пинг базы данных
+    - Корректное освобождение ресурсов
+    """
+    _cfg: Dict[str, Any]
+    """
+    Конфигурация подключения и коллекций.
+    Ожидает поля: host, user, password, timeout, db_name, collections.
+    """
+
     _client: MongoClient = field(default_factory=MongoClient)
+    """
+    Клиент MongoDB. Инициализируется при вызове init_dao().
+    """
+
     db: pymongo.database.Database = field(init=False) # type: ignore
+    """
+    Объект базы данных, полученный из _client.
+    Устанавливается при инициализации.
+    """
+
     poll_interval: int = 10
+    """
+    Интервал (в секундах) между проверками доступности MongoDB.
+    Используется таймером мониторинга.
+    """
+
     db_timer:Optional[Timer] = field(default=None)
+    """
+    Таймер для периодического пинга MongoDB.
+    Предотвращает разрыв соединения при длительной неактивности.
+    """
 
     def init_dao(
                  self
                 ) -> None:
+        """
+        Инициализирует DAO: подключается к MongoDB, загружает коллекции и создаёт индексы.
+        Должен быть вызван перед использованием.
+        """
         self._get_mongo_client()
         self.db = self._client[self._cfg['db_name']]
         self._check_collections()
@@ -111,7 +181,8 @@ class ConfigurableMongoDAO:
                   self
                  ) -> None:
         """
-        Переводит DAO в режим мониторинга.
+        Запускает режим мониторинга: периодически проверяет доступность MongoDB.
+        Используется для поддержания активного соединения.
         """
         logger.info("Запуск мониторинга базы данных...")
         self._monitor_db()
@@ -120,8 +191,7 @@ class ConfigurableMongoDAO:
                     self
                    ) -> None:
         """
-        Периодически проверяет изменения в выполнении заданий.
-        Выгружает изменения в БД.
+        Запускает периодический таймер для проверки соединения с MongoDB.
         """
         def __check_db():
             ping_mongo(self._client)
@@ -131,7 +201,12 @@ class ConfigurableMongoDAO:
 
     def _get_mongo_client(
                           self                              
-                         ) -> None:   
+                         ) -> None:
+        """
+        Инициализирует и проверяет соединение с MongoDB.
+
+        :raises ValueError: Если MongoDB недоступна в течение таймаута.
+        """  
         self._client = MongoClient(
                                    host=self._cfg['host'],
                                    username=self._cfg['user'],
@@ -144,6 +219,13 @@ class ConfigurableMongoDAO:
     def _check_collections(
                            self
                           ) -> None:
+        """
+        Проверяет наличие коллекций из конфига и создаёт для них атрибуты в DAO.
+
+        Для каждой коллекции:
+        - Назначает атрибут (например, self.samples)
+        - Создаёт необходимые индексы через _ensure_indexes
+        """
         for coll_name in self._cfg['collections'].keys():
             if not hasattr(self, coll_name):
                 setattr(self, coll_name, self.db.get_collection(coll_name))
@@ -154,7 +236,12 @@ class ConfigurableMongoDAO:
                         self,
                         coll_name:str
                        ) -> None:
-        """Идёмпотентно создаём индексы по конфигу YAML."""
+        """
+        Идемпотентно создаёт индексы для указанной коллекции на основе конфигурации.
+
+        :param coll_name: Название коллекции.
+        :type coll_name: str
+        """
         coll: Optional[pymongo.collection.Collection] # type: ignore
         coll = getattr(self, coll_name, None)
         if coll != None:
@@ -173,10 +260,12 @@ class ConfigurableMongoDAO:
                     documents: List[Dict[str, Any]]
                    ) -> None:
         """
-        Вставляет множество новых документов в указанную коллекцию.
-        
+        Вставляет несколько документов в указанную коллекцию.
+
         :param collection: Название коллекции.
+        :type collection: str
         :param documents: Список документов для вставки.
+        :type documents: List[Dict[str, Any]]
         """
         coll: pymongo.collection.Collection # type: ignore
         coll = getattr(self, collection)
@@ -196,12 +285,14 @@ class ConfigurableMongoDAO:
                     doc: Dict[str, Any]
                    ) -> None:
         """
-        Обновляет/вставляет множество документов в указанной коллекции.
-        
+        Обновляет несколько документов, соответствующих фильтру.
+
         :param collection: Название коллекции.
-        :param updates: Словарь вида {query: document}, где:
-            - query: фильтр для поиска документа (аналог MongoDB query).
-            - document: данные для обновления/вставки.
+        :type collection: str
+        :param query: Фильтр для поиска документов.
+        :type query: Dict[str, Any]
+        :param doc: Данные для обновления.
+        :type doc: Dict[str, Any]
         """
         coll: pymongo.collection.Collection # type: ignore
         coll = getattr(self, collection)
@@ -227,12 +318,15 @@ class ConfigurableMongoDAO:
                    doc: Dict[str, Any]
                   ) -> None:
         """
-        Обновляет один документ в указанной коллекции.
+        Обновляет один документ, соответствующий фильтру.
 
         :param collection: Название коллекции.
-        :param query: Фильтр для поиска документа (аналог MongoDB query).
+        :type collection: str
+        :param query: Фильтр для поиска документа.
+        :type query: Dict[str, Any]
         :param doc: Данные для обновления.
-        """ 
+        :type doc: Dict[str, Any]
+        """
         coll: pymongo.collection.Collection # type: ignore
         coll = getattr(self, collection)
         normalized_doc:Dict[str, Any] = _normalize(doc)
@@ -255,7 +349,14 @@ class ConfigurableMongoDAO:
                    doc: Dict[str, Any]
                   ) -> None:
         """
-        Обновляет или создаёт новый документ в указанной коллекции.
+        Выполняет upsert (update или insert) одного документа.
+
+        :param collection: Название коллекции.
+        :type collection: str
+        :param key: Ключ для поиска (уникальный фильтр).
+        :type key: Dict[str, Any]
+        :param doc: Данные для вставки или обновления.
+        :type doc: Dict[str, Any]
         """
         coll: pymongo.collection.Collection # type: ignore
 
@@ -272,13 +373,18 @@ class ConfigurableMongoDAO:
              limit: int = 0
             ) -> List[Dict[str, Any]]:
         """
-        Ищет документы в указанной коллекции.
+        Находит все документы, соответствующие фильтру.
 
         :param collection: Название коллекции.
-        :param query: Фильтр для поиска документов (аналог MongoDB query).
-        :param projection: Поля для выборки (аналог MongoDB projection).
-        :param limit: Максимальное количество документов для выборки.
-        :returns: Список найденных документов.
+        :type collection: str
+        :param query: Фильтр поиска.
+        :type query: Dict[str, Any]
+        :param projection: Проекция полей (1 — включить, 0 — исключить).
+        :type projection: Optional[Dict[str, int]]
+        :param limit: Ограничение количества результатов.
+        :type limit: int
+        :return: Список найденных документов.
+        :rtype: List[Dict[str, Any]]
         """
         coll:pymongo.collection.Collection # type: ignore
         coll = getattr(self, collection)
@@ -291,12 +397,16 @@ class ConfigurableMongoDAO:
                  projection: Optional[Dict[str, int]] = None
                 ) -> Dict[str, Any]:
         """
-        Ищет один документ в указанной коллекции.
+        Находит один документ, соответствующий фильтру.
 
         :param collection: Название коллекции.
-        :param query: Фильтр для поиска документа (аналог MongoDB query).
-        :param projection: Поля для выборки (аналог MongoDB projection).
-        :return: Найденный документ или None, если ничего не найдено.
+        :type collection: str
+        :param query: Фильтр поиска.
+        :type query: Dict[str, Any]
+        :param projection: Проекция полей.
+        :type projection: Optional[Dict[str, int]]
+        :return: Найденный документ или пустой словарь.
+        :rtype: Dict[str, Any]
         """
         coll: pymongo.collection.Collection # type: ignore
         coll = getattr(self, collection)
@@ -312,10 +422,12 @@ class ConfigurableMongoDAO:
                query: Dict[str, Any]
               ) -> None:
         """
-        Удаляет один документ из указанной коллекции по фильтру.
+        Удаляет один документ, соответствующий фильтру.
 
         :param collection: Название коллекции.
-        :param query: Фильтр для поиска документа (аналог MongoDB query).
+        :type collection: str
+        :param query: Фильтр поиска.
+        :type query: Dict[str, Any]
         """
         coll: pymongo.collection.Collection = getattr(self, collection) # type: ignore
         result = coll.delete_one(_normalize(query))
@@ -329,10 +441,8 @@ class ConfigurableMongoDAO:
 
     def stop_dao(self) -> None:
         """
-        Корректно останавливает DAO:
-        - останавливает таймер мониторинга БД
-        - закрывает соединение с MongoDB
-        - освобождает ресурсы
+        Корректно останавливает DAO: останавливает таймер, закрывает соединение с MongoDB.
+        Должен вызываться при завершении работы.
         """
         logger.info("Остановка ConfigurableMongoDAO...")
 
@@ -356,7 +466,11 @@ def ping_mongo(
                client: pymongo.MongoClient
               ) -> None:
     """
-    Проверяет доступность MongoDB.
+    Проверяет доступность MongoDB с помощью команды ping.
+
+    :param client: Клиент MongoDB.
+    :type client: pymongo.MongoClient
+    :raises ValueError: Если сервер MongoDB недоступен.
     """
     try:
         client.admin.command("ping")
