@@ -13,12 +13,46 @@ logger = get_logger(__name__)
 
 @dataclass(slots=True)
 class SlurmManager:
+    """
+    Класс для управления задачами в системе Slurm.
+
+    Предоставляет функции для проверки доступности Slurm, отправки задач,
+    получения данных о текущих задачах и взаимодействия с системой через subprocess.
+    Инкапсулирует работу с squeue, sbatch, sacct и другими утилитами Slurm.
+    """
+
     _cfg:Dict[str, Any]
+    """
+    Конфигурационный словарь с настройками для SlurmManager.
+    Должен содержать, как минимум, имя пользователя и размеры очередей.
+    """
+    
     user:str = field(default_factory=str)
+    """
+    Имя пользователя в системе Slurm, от имени которого будут управляться задачи.
+    """
+    
     poll_interval:int = field(default=5)
+    """
+    Интервал опроса состояния задач в секундах.
+    Используется внешними компонентами (например, TaskScheduler).
+    """
+
     # Максимальное количество головных заданий 
     ljf_queue_size:int = field(default=14)
+    """
+    Максимальное количество задач с приоритетом LJF (Longest Job First), которые можно одновременно поставить в очередь.
+    В данную очередь попадают задачи, обработка которых может проходить параллельно на нескольких узлах.
+    Значение по умолчанию — 14.
+    """
+
     sjf_queue_size:int = field(default=2)
+    """
+    Максимальное количество задач с приоритетом SJF (Shortest Job First), которые можно одновременно поставить в очередь.
+    В данную очередь попадают задачи, обработка которых будет проходить только на одном узле.
+    Значение по умолчанию — 2.
+    """
+
     # словарь {job_id:job_squeue_data}
     squeue_data:Dict[
                      int,
@@ -32,9 +66,23 @@ class SlurmManager:
                                 Path,
                                 str
                     ]]] = field(default_factory=dict)
+    """
+    Внутреннее хранилище данных о задачах Slurm, полученное через `squeue --json`.
+    Ключ — job_id, значение — словарь с полями:
+    - job_id, name, parent_job_id, nodes, partition, priority, status, stderr, stdout, exit_code, work_dir, start, limit
+    - child_jobs: вложенный словарь дочерних задач (если есть)
+    Обновляется при вызове _get_queued_tasks_data().
+    """
 
+    def __post_init__(
+                      self
+                     ) -> None:
+        """
+        Выполняет инициализацию после создания экземпляра.
 
-    def __post_init__(self) -> None:
+        Заполняет поля user, ljf_queue_size, sjf_queue_size из конфига.
+        Проверяет доступность Slurm.
+        """
         self.user = self._cfg.get('user', "")
         if not self.user:
             logger.error(f"Пользователь Slurm не указан в конфигурации!")
@@ -43,9 +91,14 @@ class SlurmManager:
         self._check_slurm_presence()
         return
 
-    def _check_slurm_presence(self) -> None:
+    def _check_slurm_presence(
+                              self
+                             ) -> None:
         """
-        Проверяет доступность Slurm.
+        Проверяет, доступны ли утилиты Slurm в системе.
+
+        Выполняет `which sbatch` для проверки наличия Slurm.
+        Если sbatch не найден — логирует ошибку и вызывает исключение.
         """
         result =  self._run_subprocess(["which", "sbatch"])
         if result:
@@ -59,13 +112,19 @@ class SlurmManager:
                                self
                               ) -> None:
         """
-        Возвращает словарь job_id -> summary_dict, полученный из `squeue --json -u user`.
-        Также добавляет вложенный словарь дочерних задач к основным задачам.
-        Не вызывает scontrol (чтобы быть лёгким).
+        Получает и обновляет данные о текущих задачах пользователя в Slurm.
+
+        Выполняет `squeue --json -u user`, парсит результат и сохраняет в squeue_data.
+        Для задач с указанием родителя (через comment) добавляет ссылку на дочерние задачи.
         """
         def __timestamp_to_datetime(timestamp: Optional[int]) -> Optional[datetime]:
             """
-            Преобразование timestamp (число секунд) в datetime.
+            Преобразует Unix-время (timestamp) в объект datetime.
+
+            :param timestamp: Время в секундах с эпохи.
+            :type timestamp: Optional[int]
+            :return: Объект datetime или None.
+            :rtype: Optional[datetime]
             """
             if timestamp:
                 return datetime.fromtimestamp(timestamp)
@@ -144,9 +203,17 @@ class SlurmManager:
                          self,
                          task:ProcessingTask
                         ) -> None:
-        """Отправляет задание в Slurm"""
+        """
+        Отправляет задачу в систему Slurm с помощью sbatch.
+
+        Создаёт необходимые директории, запускает стартовый скрипт и извлекает job_id.
+        При успехе обновляет статус задачи и помечает как поставленную в очередь.
+
+        :param task: Задача для отправки в Slurm.
+        :type task: ProcessingTask
+        """
         def create_necessary_dirs():
-            # Создание необходимых директорий
+            """Создаёт рабочую директорию и директорию логов, если их нет."""
             for dir_path in [
                              task.data.work_dir,
                              (task.data.log_dir / 'slurm').resolve()
@@ -157,7 +224,12 @@ class SlurmManager:
 
         def extract_slurm_job_id(stdout: str) -> int:
             """
-            Извлекает Slurm ID задачи из stdout
+            Извлекает ID задачи Slurm из вывода sbatch.
+
+            :param stdout: Вывод команды sbatch.
+            :type stdout: str
+            :return: Идентификатор задачи или 0, если не найден.
+            :rtype: int
             """
             job_id = 0
             try:
@@ -201,7 +273,14 @@ class SlurmManager:
         return None
 
     def _get_job_info(self, job_id: str) -> Optional[Dict[str, Any]]:
-        """Получает информацию о задании из Slurm."""
+        """
+        Получает краткую информацию о задаче из Slurm с помощью sacct.
+
+        :param job_id: Идентификатор задачи.
+        :type job_id: str
+        :return: Словарь с полями job_id, state, exit_code или None.
+        :rtype: Optional[Dict[str, Any]]
+        """
         try:
             result = self._run_subprocess(
                 ["sacct", "-X", "-o", "JobID,State,ExitCode"],
@@ -243,23 +322,40 @@ class SlurmManager:
                        suppress_output: bool = False,
                       ) -> Optional[subprocess.CompletedProcess]:
         """
-        Обёртка над subprocess.run с расширенной логикой и безопасностью.
+        Универсальная обёртка для subprocess.run с расширенным логированием и обработкой ошибок.
 
-        :param cmd: Команда как строка или список аргументов.
-        :param check: Если True, вызывает CalledProcessError при неудачном коде возврата.
-        :param timeout: Таймаут выполнения в секундах.
-        :param capture_output: Ловить ли stdout и stderr.
-        :param env: Словарь переменных окружения.
+        :param cmd: Команда для выполнения (список или строка).
+        :type cmd: Union[str, List[str]]
+        :param check: Вызывать исключение при ненулевом коде возврата.
+        :type check: bool
+        :param critical: Если True, перехватывает TimeoutExpired и вызывает исключение.
+        :type critical: bool
+        :param timeout: Максимальное время выполнения в секундах.
+        :type timeout: Optional[float]
+        :param capture_output: Перехватывать stdout и stderr.
+        :type capture_output: bool
+        :param env: Переменные окружения.
+        :type env: Optional[Dict[str, str]]
         :param cwd: Рабочая директория.
+        :type cwd: Optional[str]
         :param stdin: Входной поток.
+        :type stdin: Optional[Union[IO, int]]
         :param stdout: Выходной поток.
+        :type stdout: Optional[Union[IO, int]]
         :param stderr: Поток ошибок.
+        :type stderr: Optional[Union[IO, int]]
         :param input: Входные данные для stdin.
-        :param text: Использовать текстовый режим.
-        :param shell: Использовать shell (опасно!).
-        :param log_output: Логировать вывод команды.
-        :param suppress_output: Подавлять вывод в консоль.
-        :return: Объект subprocess.CompletedProcess.
+        :type input: Optional[str]
+        :param text: Работать в текстовом режиме.
+        :type text: bool
+        :param shell: Запускать через shell.
+        :type shell: bool
+        :param log_output: Логировать команду и её вывод.
+        :type log_output: bool
+        :param suppress_output: Подавлять вывод (направить в DEVNULL).
+        :type suppress_output: bool
+        :return: Результат выполнения команды или None.
+        :rtype: Optional[subprocess.CompletedProcess]
         """
         result = None
         # Преобразование строки в список (если shell=False)

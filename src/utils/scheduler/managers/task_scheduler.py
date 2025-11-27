@@ -15,33 +15,128 @@ logger = get_logger(__name__)
 
 @dataclass(slots=True)
 class TaskScheduler:
+    """
+    Класс-планировщик для управления жизненным циклом задач обработки образцов.
+
+    Отвечает за:
+    - Загрузку конфигураций пайплайнов
+    - Формирование задач на обработку
+    - Постановку задач в очередь Slurm
+    - Актуализацию состояния запущенных задач
+    - Выгрузку результатов в базу данных
+    - Периодический мониторинг и планирование
+    """
+
     _cfg:Dict[str, Any]
-    dao:ConfigurableMongoDAO
-    poll_interval:int = field(default=30)
-    script_renderer:Optional[ScriptRenderer] = field(default=None)
-    slurm_manager:Optional[SlurmManager] = field(default=None)
-    pipelines: Dict[str, Pipeline] = field(default_factory=dict)
-    head_job_node:str = field(default_factory=str)
-    # словарь созданных задач {task_id: ProcessingTask}
-    prepared_tasks:Dict[str, ProcessingTask] = field(default_factory=dict)
-    # словарь задач, подготовка которых завершилась с ошибкой
-    disprepared_tasks:Dict[str, ProcessingTask] = field(default_factory=dict)
-    # словарь всех запущенных задач {task_id: ProcessingTask}
-    queued_tasks: Dict[str, ProcessingTask] = field(default_factory=dict)
-    # словарь запущенных задач, отсортированных по алгоритму Shortest Job First
-    queued_tasks_sjf: Dict[str, ProcessingTask] = field(default_factory=dict)
-    # словарь запущенных задач, отсортированных по алгоритму Longest Job First
-    queued_tasks_ljf: Dict[str, ProcessingTask] = field(default_factory=dict)
+    """
+    Конфигурационный словарь с настройками планировщика.
+    Должен содержать: шаблоны скриптов, пути к шейперам, настройки Slurm, пайплайны и т.д.
+    """
     
-    # словари данных для идёмпотентной загрузки в БД вида {collection: {doc_id: doc_data}
+    dao:ConfigurableMongoDAO
+    """
+    Экземпляр DAO для взаимодействия с MongoDB.
+    Используется для загрузки метаданных образцов, результатов и задач.
+    """
+
+    poll_interval:int = field(default=30)
+    """
+    Интервал (в секундах) между итерациями мониторинга.
+    Определяет, как часто планировщик проверяет состояние задач и обновляет данные.
+    """
+
+    script_renderer:Optional[ScriptRenderer] = field(default=None)
+    """
+    Рендерер стартовых скриптов для задач.
+    Инициализируется при запуске из шаблона, указанного в конфиге.
+    """
+
+    slurm_manager:Optional[SlurmManager] = field(default=None)
+    """
+    Менеджер взаимодействия с системой Slurm.
+    Управляет постановкой задач в очередь, проверкой статусов и сбором данных.
+    """
+
+    pipelines: Dict[str, Pipeline] = field(default_factory=dict)
+    """
+    Словарь загруженных пайплайнов, индексированных по идентификатору.
+    Заполняется при инициализации на основе конфигурации.
+    """
+
+    head_job_node:str = field(default_factory=str)
+    """
+    Имя вычислительного узла, на котором будет запущена головная задача (head job).
+    Может использоваться для распределения нагрузки.
+    """
+
+    prepared_tasks:Dict[str, ProcessingTask] = field(default_factory=dict)
+    """
+    Словарь задач, подготовка которых завершена (статус 'prepared').
+    Готовы к постановке в очередь Slurm.
+    Ключ — task_id, значение — экземпляр ProcessingTask.
+    """
+
+    disprepared_tasks:Dict[str, ProcessingTask] = field(default_factory=dict)
+    """
+    Словарь задач, у которых возникли ошибки при подготовке данных.
+    Хранится для диагностики и логирования.
+    """
+
+    queued_tasks: Dict[str, ProcessingTask] = field(default_factory=dict)
+    """
+    Общий словарь всех задач, поставленных в очередь Slurm (статус 'queued' или 'running').
+    Используется для актуализации состояния.
+    """
+
+    queued_tasks_sjf: Dict[str, ProcessingTask] = field(default_factory=dict)
+    """
+    Словарь задач, поставленных в очередь с приоритетом SJF (Shortest Job First).
+    Используется для контроля лимитов очереди.
+    """
+
+    queued_tasks_ljf: Dict[str, ProcessingTask] = field(default_factory=dict)
+    """
+    Словарь задач, поставленных в очередь с приоритетом LJF (Longest Job First).
+    Используется для контроля лимитов очереди.
+    """
+
     results2db:Dict[str, ResultMeta] = field(default_factory=dict)
+    """
+    Буфер для результатов, требующих выгрузки в БД.
+    Ключ — sample_id, значение — экземпляр ResultMeta.
+    Очищается после успешной выгрузки.
+    """
+
     samples2db:Dict[str, SampleMeta] = field(default_factory=dict)
+    """
+    Буфер для метаданных образцов, требующих выгрузки в БД.
+    Ключ — sample_id, значение — экземпляр SampleMeta.
+    """
+
     tasks2db:Dict[str, ProcessingTask] = field(default_factory=dict)
+    """
+    Буфер для задач, требующих выгрузки в БД.
+    Ключ — task_id, значение — экземпляр ProcessingTask.
+    """
+
     db_timer:Optional[Timer] = field(default=None)
+    """
+    Таймер для периодического выполнения цикла мониторинга.
+    Управляется методами start_scheduler и stop_scheduler.
+    """
     
     def init_scheduler(
                        self
                       ) -> None:
+        """
+        Инициализирует компоненты планировщика перед запуском.
+
+        - Создаёт script_renderer
+        - Загружает пайплайны
+        - Инициализирует slurm_manager
+        - Выполняет начальную актуализацию задач и постановку в очередь
+        - Очищает _cfg для экономии памяти
+        """
         # Инициализация загрузчика скриптов
         self.script_renderer = ScriptRenderer(starting_script_template=Path(self._cfg.get('start_script_template', '')))
         # Загрузка конфигурации пайплайнов
@@ -58,7 +153,13 @@ class TaskScheduler:
                 self
                ) -> None:
         """
-        Работа с заданиями: актуализация, формирование, постановка в очередь, выгрузка данных в БД
+        Основной цикл обновления состояния планировщика.
+
+        Выполняет:
+        - Актуализацию данных о текущих задачах
+        - Создание новых задач на основе доступных образцов
+        - Постановку задач в очередь Slurm
+        - Выгрузку накопленных изменений в БД
         """
         # Актуализация информации о запущенных заданиях
         self._actualize_tasks_data()
@@ -74,7 +175,12 @@ class TaskScheduler:
                         self
                        ) -> None:
         """
-        Загрузка конфигурации пайплайнов из общей конфигурации.
+        Загружает конфигурации пайплайнов из _cfg и создаёт экземпляры Pipeline.
+
+        Для каждого пайплайна:
+        - Создаёт объект Pipeline
+        - Подгружает шейперы
+        - Инициализирует условия, таймауты, переменные
         """
         self.pipelines = {
                           pipeline_id:Pipeline(
@@ -94,7 +200,9 @@ class TaskScheduler:
                               self
                              ) -> None:
         """
-        Инициализация менеджера Slurm.
+        Создаёт и инициализирует экземпляр SlurmManager.
+
+        Использует настройки из _cfg['slurm'].
         """
         logger.debug("Инициализация менеджера Slurm...")
         self.slurm_manager = SlurmManager(
@@ -107,10 +215,13 @@ class TaskScheduler:
                               self
                              ) -> None:
         """
-        Выгружает из БД список созданных ранее задач, в т.ч. запущенных в обработку.
-        Собирает данные о запущенных заданиях из Slurm.
-        Актуализирует данные заданий.
-        Загружает обновленные данные в БД.
+        Актуализирует состояние всех задач, связанных с планировщиком.
+
+        - Загружает из БД задачи в статусе 'prepared'
+        - Загружает задачи в статусе 'queued' и 'running'
+        - Обновляет их состояние с помощью Slurm
+        - Помечает завершённые задачи
+        - Удаляет завершённые задачи из очередей
         """
         # Обновляем информацию по созданным, но не запущенным заданиям
         logger.debug("Актуализация данных о созданных заданиях...")
@@ -158,14 +269,44 @@ class TaskScheduler:
                            statuses:List[str]
                           ) -> Dict[str, ProcessingTask]:
         """
-        Выгружает из БД список задач.
-        Возвращает словарь {job_id: ProcessingTask}, сохраняя его в self.queued_tasks.
+        Загружает из базы данных задачи с указанными статусами и восстанавливает связанные метаданные.
+
+        Выполняет следующие действия:
+        - Выполняет запрос к коллекции 'tasks' с фильтрацией по статусам
+        - Для каждой задачи извлекает идентификатор образца (sample_id)
+        - Подгружает соответствующие метаданные образца и результата, если они ещё не загружены
+        - Создаёт экземпляры ProcessingTask с привязкой к метаданным
+
+        Используется при актуализации состояния задач (например, при перезапуске планировщика
+        или обновлении информации о запущенных/подготовленных заданиях).
+
+        :param statuses: Список статусов задач, которые необходимо загрузить
+                        (например, 'prepared', 'queued', 'running').
+        :type statuses: List[str]
+        :return: Словарь, где ключ — идентификатор задачи (task_id),
+                значение — соответствующий экземпляр ProcessingTask.
+        :rtype: Dict[str, ProcessingTask]
         """
         def add_metadata_to_obj_storage(
                                         obj_id:str,
                                         obj_storage:Dict[str, Any],
                                         obj_type:str,
                                        ) -> Dict[str, dict]:
+            """
+            Вспомогательная функция для загрузки метаданных образца или результата.
+
+            Проверяет, загружены ли уже данные для указанного объекта.
+            Если нет — запрашивает из БД и сохраняет в хранилище.
+
+            :param obj_id: Идентификатор объекта (обычно sample_id).
+            :type obj_id: str
+            :param obj_storage: Словарь-хранилище для метаданных.
+            :type obj_storage: Dict[str, Any]
+            :param obj_type: Тип объекта: 'sample' или 'result'.
+            :type obj_type: str
+            :return: Обновлённое хранилище метаданных.
+            :rtype: Dict[str, dict]
+            """
             if obj_id not in obj_storage:
                 collection = f'{obj_type}s'
                 obj_storage[obj_id] = self.dao.find_one(
@@ -214,7 +355,10 @@ class TaskScheduler:
                                   task: ProcessingTask
                                  ) -> None:
         """
-        Добавляет задание в список на выгрузку в БД.
+        Добавляет задачу в буфер для последующей выгрузки в БД.
+
+        :param task: Задача для добавления.
+        :type task: ProcessingTask
         """
         self.tasks2db[task.task_id] = task
         logger.debug(f"Задание {task.task_id} добавлено в список на выгрузку в БД.")
@@ -224,6 +368,12 @@ class TaskScheduler:
                                                   self,
                                                   task: ProcessingTask
                                                  ) -> None:
+        """
+        Удаляет задачу из всех очередей TaskScheduler.
+
+        :param task: Задача для удаления.
+        :type task: ProcessingTask
+        """
         if task.task_id in self.queued_tasks:
             try:
                 del self.queued_tasks[task.task_id]
@@ -247,7 +397,12 @@ class TaskScheduler:
                           self
                          ) -> None:
         """
-        Создание новых задач на обработку из данных БД и данных класса.
+        Создаёт новые задачи на обработку для совместимых образцов.
+
+        Для каждого пайплайна:
+        - Находит образцы, удовлетворяющие условиям
+        - Исключает уже обработанные
+        - Создаёт экземпляр ProcessingTask
         """
         # Формирование списка образцов, подходящих для обработки, для каждого пайплайна
         for pipeline_name, pipeline in self.pipelines.items():
@@ -266,7 +421,8 @@ class TaskScheduler:
                                                        )
             # Создаём задания на обработку
             if pipeline.compatible_samples:
-                for sample in pipeline.compatible_samples:
+                while pipeline.compatible_samples:
+                    sample = pipeline.compatible_samples.pop(0)
                     self._create_task(
                                       sample['sample_id'],
                                       pipeline    
@@ -279,7 +435,14 @@ class TaskScheduler:
                      pipeline:Pipeline
                     ) -> Optional[ProcessingTask]:
         """
-        Формирует задание на обработку
+        Создаёт и инициализирует задачу на обработку образца.
+
+        :param sample_id: Идентификатор образца.
+        :type sample_id: str
+        :param pipeline: Пайплайн для обработки.
+        :type pipeline: Pipeline
+        :return: Созданная задача или None при ошибке.
+        :rtype: Optional[ProcessingTask]
         """
         logger.debug(f"Создание задания обработки образца {sample_id} пайплайном {pipeline.id}")
         # Вытягиваем меты образца и его результатов. Создаём объект задания
@@ -316,7 +479,14 @@ class TaskScheduler:
                       obj_type:str
                      ) -> Optional[ResultMeta|SampleMeta]:
         """
-        Выгружает метаданные образца из БД. В случае отсутствия - логгирует ошибку.
+        Загружает метаданные образца или результата из БД.
+
+        :param sample_id: Идентификатор образца.
+        :type sample_id: str
+        :param obj_type: Тип метаданных: 'sample' или 'result'.
+        :type obj_type: str
+        :return: Экземпляр метаданных или None.
+        :rtype: Optional[ResultMeta | SampleMeta]
         """
         meta = None
         logger.debug(f"Получение метаданных типа '{obj_type}' для образца {sample_id} из БД...")
@@ -335,12 +505,10 @@ class TaskScheduler:
                             self
                            ) -> None:
         """
-        Проверяет очереди Slurm на возможность запуска новых заданий.
-        Сортирует ранее созданные задания в зависимости от:
-        - типа сортировки, указанного в пайплайне (SJF, LJF);
-        - максимальной длительности задания;
-        - размера входных данных.
-        Добавляет задания в очередь Slurm в порядке, определённом сортировкой.
+        Поставляет подготовленные задачи в очередь Slurm.
+
+        Задачи сортируются по типу (SJF/LJF) и приоритету.
+        Учитывает лимиты очередей из slurm_manager.
         """
         def get_sort_key(task: ProcessingTask) -> float:
             def timeout_to_minutes(timeout: str) -> int:
@@ -396,7 +564,10 @@ class TaskScheduler:
                         self
                        ) -> None:
         """
-        Запускает периодическую проверку изменений в выполнении заданий.
+        Запускает периодический мониторинг состояния задач.
+
+        Инициализирует таймер, который каждые poll_interval секунд
+        вызывает цикл обновления и актуализации.
         """
         # Переходим в режим мониторинга: периодически проверяем коллекции с данными на загрузку в БД на предмет... данных
         logger.info("Запуск мониторинга обработки данных...")
@@ -406,8 +577,7 @@ class TaskScheduler:
                            self
                           ) -> None:
         """
-        Периодически проверяет изменения в выполнении заданий.
-        Выгружает изменения в БД.
+        Запускает периодический цикл мониторинга с использованием таймера.
         """
         def __check_new_data():
             self._update()
@@ -417,7 +587,8 @@ class TaskScheduler:
 
     def _upload_data_to_db(self) -> None:
         """
-        Выгружает накопленные изменения задач и результаты в БД.
+        Выгружает все накопленные изменения из буферов в MongoDB.
+        Очищает буферы после успешной выгрузки.
         """
         def upload_data(
                         collection:str,
@@ -449,10 +620,11 @@ class TaskScheduler:
 
     def stop_scheduler(self) -> None:
         """
-        Корректно останавливает TaskScheduler:
-        - отменяет таймер мониторинга
-        - выполняет финальную выгрузку данных в БД
-        - сбрасывает активные задачи при необходимости
+        Корректно останавливает планировщик.
+
+        - Отменяет таймер мониторинга
+        - Выполняет финальную выгрузку всех данных в БД
+        - Логирует завершение
         """
         logger.info("Остановка TaskScheduler...")
 

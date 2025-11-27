@@ -6,10 +6,27 @@ from utils.logger import get_logger
 logger = get_logger(__name__)
 
 class ScriptRenderer:
+    """
+    Класс для рендеринга bash-скриптов и строковых шаблонов с использованием Jinja2.
+
+    Предназначен для генерации стартовых скриптов запуска задач в системе Slurm
+    на основе шаблонов и переданных параметров. Также поддерживает рендеринг
+    произвольных строковых шаблонов.
+    """
+
     def __init__(
                  self,
                  starting_script_template: Path
                 ):
+        """
+        Инициализирует рендерер шаблонов.
+
+        Загружает шаблон стартового скрипта из указанного файла.
+        При ошибке (файл не найден или ошибка загрузки) логирует проблему.
+
+        :param starting_script_template: Путь к файлу шаблона стартового скрипта.
+        :type starting_script_template: Path
+        """
         try:
             self.env:Environment = Environment(
                                             loader=FileSystemLoader(starting_script_template.parent),
@@ -42,8 +59,41 @@ class ScriptRenderer:
                                slurm_options: Optional[Dict[str, str]]                             
                               ) -> Path:
         """
-        Генерирует bash-файл запуска пайплайна из Jinja2-шаблона.
-        Возвращает путь к сгенерированному файлу.
+        Генерирует bash-скрипт запуска пайплайна на основе шаблона Jinja2.
+
+        Подставляет переданные параметры в шаблон и сохраняет результат в файл.
+        Создаёт директорию для логов, если она отсутствует.
+
+        :param script_filename: Имя выходного файла скрипта.
+        :type script_filename: str
+        :param job_name: Имя задачи для Slurm.
+        :type job_name: str
+        :param work_dir: Рабочая директория выполнения.
+        :type work_dir: Path
+        :param res_dir: Директория для результатов.
+        :type res_dir: Path
+        :param log_dir: Директория для логов; в ней будет создан скрипт.
+        :type log_dir: Path
+        :param pipeline_timeout: Таймаут выполнения пайплайна в формате 'HH:MM' или 'D-HH:MM'.
+        :type pipeline_timeout: str
+        :param nxf_command: Команда запуска Nextflow.
+        :type nxf_command: str
+        :param head_job_node: Вычислительный узел, на котором запускается головная задача.
+        :type head_job_node: str
+        :param head_job_stdout: Путь к файлу stdout головной задачи.
+        :type head_job_stdout: Path
+        :param head_job_stderr: Путь к файлу stderr головной задачи.
+        :type head_job_stderr: Path
+        :param head_job_exitcode_f: Путь к файлу с кодом завершения головной задачи.
+        :type head_job_exitcode_f: Path
+        :param environment_variables: Переменные окружения для установки в скрипте.
+        :type environment_variables: Optional[Dict[str, str]]
+        :param nxf_variables: Переменные, передаваемые в Nextflow.
+        :type nxf_variables: Optional[Dict[str, str]]
+        :param slurm_options: Дополнительные опции для sbatch.
+        :type slurm_options: Optional[Dict[str, str]]
+        :return: Путь к сгенерированному скрипту или пустой Path при ошибке.
+        :rtype: Path
         """
         script_path = Path()
         try:
@@ -93,8 +143,17 @@ class ScriptRenderer:
                       **kwargs
                      ) -> str:
         """
-        Принимает шаблон строки и произвольные аргументы.
-        Возвращает сгенерированную строку.
+        Рендерит произвольную строку-шаблон Jinja2 с переданными переменными.
+
+        Если переменные переданы — выполняет подстановку.
+        При ошибке рендеринга логирует её и возвращает исходную строку.
+        Если переменные не переданы — возвращает строку без изменений.
+
+        :param template: Строка с шаблоном Jinja2.
+        :type template: str
+        :param kwargs: Переменные для подстановки в шаблон.
+        :return: Сгенерированная строка или исходная при ошибке.
+        :rtype: str
         """
         if kwargs:
             try:

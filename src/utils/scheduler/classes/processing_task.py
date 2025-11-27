@@ -1,253 +1,86 @@
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from os import access as os_access, W_OK, R_OK
 from pathlib import Path
 from typing import Any, Dict, Tuple, Optional, Set, Union
-import subprocess
 from scheduler import *
 from tools.script_renderer import ScriptRenderer
-from .pipeline import Pipeline
+from . import *
 from utils.logger import get_logger
 
 logger = get_logger(__name__)
 
-
-@dataclass(slots=True)
-class TaskSlurmJob:
-    # Идентификаторы
-    job_id:int
-    parent_job_id:int = field(default=0)
-    name:Optional[str] = field(default=None)
-    # Отслеживание
-    work_dir:Optional[Path] = field(default=None)
-    partition:Optional[str] = field(default=None)
-    priority:Optional[str] = field(default=None)
-    nodes:Optional[str] = field(default=None)
-    status:Optional[str] = field(default=None)
-    stderr:Optional[Path] = field(default=None)
-    stdout:Optional[Path] = field(default=None)
-    exit_code:Optional[int] = field(default=None)
-    # Время
-    start:Optional[datetime] = field(default=None)
-    limit:Optional[datetime] = field(default=None)
-    finish:Optional[datetime] = field(default=None)
-
-    @staticmethod
-    def from_dict(squeue_data:Dict[str, Any]) -> 'TaskSlurmJob':
-        slurm_job = TaskSlurmJob(
-                                 job_id=squeue_data['job_id'],
-                                 parent_job_id=squeue_data['parent_job_id'],
-                                 name=squeue_data['name'],
-                                 work_dir=squeue_data['work_dir'],
-                                 partition=squeue_data['partition'],
-                                 priority=squeue_data['priority'],
-                                 nodes=squeue_data['nodes'],
-                                 status=squeue_data['status'],
-                                 stderr=squeue_data['stderr'],
-                                 stdout=squeue_data['stdout'],
-                                 exit_code=squeue_data['exit_code'],
-                                 start=squeue_data.get('start'),
-                                 limit=squeue_data.get('limit')
-                                )
-        return slurm_job
-
-    def _update(self, slurm_data:Dict[str, Any]):
-        if slurm_data:
-            for attr, value in self.__dict__.items():
-                if attr in ['job_id', 'start', 'limit']: continue
-                setattr(self, attr, slurm_data.get(attr, value))
-            self.status = slurm_data['status']
-
-            # Если задача запущена, собираем данные по лимитам времени
-            if self.status == 'RUNNING':
-                for property in ['start', 'limit']:
-                    if all([getattr(self, property) is None,
-                            property in slurm_data]):
-                        setattr(
-                                self,
-                                property,
-                                slurm_data[property]
-                               )
-        
-        else:
-            self._complete()
-
-    def _complete(
-                  self,
-                  now:Optional[datetime] = None,
-                  exit_code_f:Optional[Path] = None
-                 ) -> None:
-        """
-        Завершение задачи.
-        Отмечает время завершения.
-        Получает exit-code.
-        В зависимости от exit-code выставляет конечный статус задачи
-        """
-        if not now:
-            now = datetime.now(timezone.utc)
-        self.finish = now
-        self._collect_completed_process_data(exit_code_f)
-        return None
-
-    def _collect_completed_process_data(
-                                        self,
-                                        exit_code_f:Optional[Path] = None
-                                       ) -> None:
-        if self.work_dir:
-            if not exit_code_f:
-                exit_code_f = (self.work_dir / '.exitcode').resolve()
-            logger.debug(f"Проверяем {exit_code_f}")
-            if exit_code_f.exists():
-                logger.debug(f"Найден .exitcode в {self.work_dir.as_posix()}:")
-                try:
-                    # Читаем первую строку и преобразуем в число
-                    with open(exit_code_f, 'r') as f:
-                        self.exit_code = int(f.readline().strip())
-                        logger.debug(f"exit_code: {self.exit_code}")
-                    return None
-                except Exception as e:
-                    logger.error(f"Ошибка при чтении {exit_code_f.as_posix()}: {e}")
-            else:
-                logger.error(f"Не найден .exitcode в {self.work_dir.as_posix()}")
-            
-        self._define_task_status_by_exit_code()
-        return None
-
-    def _define_task_status_by_exit_code(
-                                         self
-                                        ) -> None:
-        """
-        Определение конечного статуса задачи Slurm по коду завершения
-        """
-        statuses = {
-                    0: "COMPLETED",
-                    124: "TIMEOUT"
-                   }
-        if self.exit_code is None:
-            self.status = "UNKNOWN"
-        elif isinstance(self.exit_code, int):
-            self.status = statuses.get(self.exit_code, "FAILED")
-
-
-@dataclass(slots=True)
-class TaskData:
-    # Словарь вида {группа файлов: множество путей к файлам}}
-    input_data:Dict[str, Set[Path]] = field(default_factory=dict)
-    input_files_size:int = field(default=0)
-    # словарь вида {группа(например, QC): {тип_файлов: маска для поиска}}
-    expected_output_data:Dict[str, Dict[str,str]] = field(default_factory=dict)
-    # словарь вида {группа(например, QC): {тип_файлов: множество путей к файлам}}
-    output_data:Dict[str, Dict[str,Set[Path]]] = field(default_factory=dict)
-    output_files_size:int = field(default=0)
-    start_script:Path = field(default_factory=Path)
-    work_dir:Path = field(default_factory=Path)
-    result_dir:Path = field(default_factory=Path)
-    log_dir:Path = field(default_factory=Path)
-    head_job_stdout:Path = field(default_factory=Path) 
-    head_job_stderr:Path = field(default_factory=Path)
-    head_job_exitcode_f:Path = field(default_factory=Path)
-
-    @staticmethod
-    def from_dict(doc: Dict[str, Any]) -> 'TaskData':
-        def __extract_input_data_from_doc(
-                                          item: Dict[str, Any]
-                                         ) -> Dict[str, Set[Path]]:
-            extracted_data = {}
-            for group_name, files in item.items():
-                extracted_data[group_name] = set([Path(f) for f in files])
-            return extracted_data
-
-        def __extract_output_data_from_doc(
-                                           item: Dict[str, Any]
-                                          ) -> Dict[str, Dict[str,Set[Path]]]:
-            extracted_data = {}
-            for group_name, group_data in item.items():
-                unpacked_data = {}
-                for filetype, files in group_data.items():
-                    unpacked_data[filetype] = set([Path(f) for f in files])
-                extracted_data[group_name] = unpacked_data
-            return extracted_data
-
-        task_data = TaskData(
-                             input_data=__extract_input_data_from_doc(doc.get("input_data", {})),
-                             expected_output_data=doc.get("expected_output_data", {}),
-                             output_data=__extract_output_data_from_doc(doc.get("output_data", {})),
-                             input_files_size=doc.get("input_files_size", 0),
-                             output_files_size=doc.get("output_files_size", 0),
-                             start_script=Path(doc.get("start_script", "")),
-                             work_dir=Path(doc.get("work_dir", "")),
-                             result_dir=Path(doc.get("result_dir", "")),
-                             log_dir=Path(doc.get("log_dir", "")),
-                             head_job_stdout=Path(doc.get("head_job_stdout", "")),
-                             head_job_stderr=Path(doc.get("head_job_stderr", "")),
-                             head_job_exitcode_f=Path(doc.get("head_job_exitcode_f", ""))
-                            )
-
-        return task_data
-
-    def _check_output_files(
-                            self
-                           ) -> None:
-        """
-        Осуществляет поиск ожидаемых выходных файлов по маскам в self.expected_output_data.
-        Сохраняет результаты в self.output_data.
-        """
-        logger.debug(f"Поиск выходных файлов в папке {self.result_dir.as_posix()}")
-        if self.result_dir.exists():
-            for file_group, filetypes in self.expected_output_data.items():
-                self.output_data[file_group] = {}
-                for filetype, file_mask in filetypes.items():
-                    # проводим поиск файлов по маске, добавляем только файлы с НЕНУЛЕВЫМИ размерами
-                    files = set([
-                                f for f in self.result_dir.rglob(file_mask)
-                                if all([
-                                        f.is_file(),
-                                        f.stat().st_size > 0
-                                       ])
-                                ])
-                    if files:
-                        logger.debug(f"Найдено файлов группы {file_group}: {len(files)}")
-                    else:
-                        logger.error(f"Файлы группы не {file_group} найдены")
-                    self.output_data[file_group].update({filetype:files})
-        else:
-            logger.error(f"Папка результата {self.result_dir.as_posix()} не найдена.")
-        return None
-
-
 @dataclass(slots=True)
 class ProcessingTask:
+    """
+    Класс для управления задачей обработки образца с помощью заданного пайплайна.
+
+    Хранит метаданные образца и результатов, информацию о пайплайне,
+    состояние выполнения, данные для запуска в Slurm и временные метки.
+
+    Статусы:
+     - "created" - задание только создано;
+     - "prepared" - подготовлены все данные, необходимые для обработки;
+     - "disprepared" - подготовка прошла неудачно;
+     - "queued" - задание в очереди Slurm, обработка не начата;
+     - "processing" - идёт обработка данных;
+     - "completed" - задание успешно завершено;
+     - "failed" - задание завершено с ошибкой.
+    """
     sample_meta:SampleMeta
+    """Метаданные образца, подлежащего обработке."""
+
     result_meta:ResultMeta
-    pipeline:Pipeline
-    # Индикаторы
-    # Шаблон имени: sample_id_pipeline-name_pipeline-version
-    task_id:str = field(default_factory=str)
-    status:str = field(default="created")
-    sorting:str = field(default_factory=str)
-    # Файлы
-    data: TaskData = field(default_factory=TaskData)
-    # Время
-    created:Optional[datetime] = field(default=None)
-    queued:Optional[datetime] = field(default=None)
-    finish:Optional[datetime] = field(default=None)
-    last_update:Optional[datetime] = field(default=None)
-    time_from_creation_to_finish:str = field(default_factory=str)
-    time_in_processing:str = field(default_factory=str)
-    # Slurm
+    """Метаданные результатов обработки образца."""
     
-    # Статусы:
-    #  - "created" - задание только создано;
-    #  - "prepared" - подготовлены все данные, необходимые для обработки;
-    #  - "disprepared" - подготовка прошла неудачно;
-    #  - "queued" - задание в очереди Slurm, обработка не начата;
-    #  - "processing" - идёт обработка данных;
-    #  - "completed" - задание успешно завершено;
-    #  - "failed" - задание завершено с ошибкой.
+    pipeline:Pipeline
+    """Пайплайн, используемый для обработки."""
+
+    # Индикаторы
+    task_id:str = field(default_factory=str)
+    """
+    Уникальный идентификатор задания.
+    Формируется автоматически как 'sample_id_pipeline-id' в post_init.
+    """
+
+    status:str = field(default="created")
+    """Текущий статус задания."""
+
+    sorting:str = field(default_factory=str)
+    """Алгоритм сортировки задания (например, 'SJF', 'LJF')."""
+    # Файлы
+
+    data: TaskData = field(default_factory=TaskData)
+    """Данные, необходимые для выполнения задания (пути, скрипты, файлы)."""
+    # Время
+
+    created:Optional[datetime] = field(default=None)
+    """Время создания задания."""
+
+    queued:Optional[datetime] = field(default=None)
+    """Время постановки задания в очередь Slurm."""
+
+    finish:Optional[datetime] = field(default=None)
+    """Время завершения обработки задания."""
+
+    last_update:Optional[datetime] = field(default=None)
+    """Время последнего обновления состояния задания."""
+
+    time_from_creation_to_finish:str = field(default_factory=str)
+    """Общее время выполнения задания в формате 'HH:MM:SS'."""
+
+    time_in_processing:str = field(default_factory=str)
+    """Время в обработке (с момента постановки в очередь) в формате 'HH:MM:SS'."""
+
+    # Slurm
     slurm_main_job:Optional[TaskSlurmJob] = field(default=None)
+    """Информация о главной задаче Slurm."""
+
     slurm_child_jobs:Dict[int, TaskSlurmJob] = field(default_factory=dict)
-    # Unix
+    """Информация о дочерних задачах Slurm (если есть)."""
+
     exit_code:Optional[int] = field(default=None)
+    """Код завершения главной задачи Slurm."""
 
     @staticmethod
     def from_dict(
@@ -256,10 +89,12 @@ class ProcessingTask:
                   sample_meta: Dict[str, Any]
                  ) -> 'ProcessingTask':
         """
-        Создаёт объект ProcessingTask из документа БД.
+        Создаёт объект ProcessingTask из документа MongoDB.
 
-        :param doc: Документ из коллекции 'tasks' в MongoDB.
-        :return: Объект ProcessingTask.
+        :param doc: Документ из коллекции 'tasks'.
+        :param result_meta: Документ из коллекции 'results'.
+        :param sample_meta: Документ из коллекции 'samples'.
+        :return: Экземпляр ProcessingTask.
         """
         # Инициализируем основные поля SampleMeta
         return ProcessingTask(
@@ -289,32 +124,53 @@ class ProcessingTask:
                 self
                ) -> Dict[str, Any]:
         """
-        Конвертирует объект ProcessingTask в словарь для сохранения в БД.
+        Конвертирует объект в словарь для сохранения в MongoDB.
+
+        Исключает приватные атрибуты и заменяет объекты метаданных
+        на их идентификаторы.
+
+        :return: Словарь с данными задания.
         """
         keys2remove = []
         dict_obj = self.__dict__
         for key in dict_obj:
+            
             if key.startswith("_"):
                 keys2remove.append(key)
+
             if key in ["sample_meta", "result_meta"]:
                 if dict_obj[key]:
                     dict_obj[key] = dict_obj[key].sample_id
                 else:
                     dict_obj[key] = ""
+            
+            if key in ['data', 'slurm_main_job']:
+                if dict_obj[key]:
+                    dict_obj[key] = dict_obj[key].to_dict()
+                else:
+                    dict_obj[key] = {}
+
+            if key == 'slurm_child_jobs':
+                if dict_obj[key]:
+                    dict_obj[key] = {
+                                     job_id:val.to_dict()
+                                     for job_id, val in dict_obj[key].items()
+                                    }
+                else:
+                    dict_obj[key] = {}
+            
         for key in keys2remove:
             del dict_obj[key]
                     
         return dict_obj
-        return {
-                "task_id": self.task_id,
-                "sample_meta": self.sample_meta.to_dict(),
-
-                
-               }
     
     def __post_init__(
                       self
                      ) -> None:
+        """
+        Автоматически заполняет поля task_id и sorting после инициализации.
+        Выполняется автоматически при создании экземпляра.
+        """
         self.task_id = f"{self.sample_meta.sample_id}_{self.pipeline.id}"
         self.sorting = self.pipeline.sorting
 
@@ -324,17 +180,34 @@ class ProcessingTask:
                       head_job_node:str                      
                      ) -> None:
         """
-        Использует метаданные SampleMeta и ResultMeta для подготовки данных для обработки по инструкциям, указанным в Pipeline.
-        Возвращает True, если подготовка прошла успешно, и False в противном случае.
+        Подготавливает все необходимые данные для выполнения задания.
+
+        Включает:
+         - создание директорий для обработки и результатов;
+         - формирование путей к служебным файлам Slurm;
+         - вызов шейпера входных данных;
+         - генерацию стартового скрипта.
+
+        При успешной подготовке статус меняется на 'prepared',
+        при неудаче — на 'disprepared'.
+
+        :param script_renderer: Объект для рендеринга стартовых скриптов.
+        :param head_job_node: Имя ноды для запуска головной задачи Slurm.
         """
+
         def __check_n_group_input_data(
                                        self:ProcessingTask,
                                        script_renderer:ScriptRenderer,
                                        head_job_node:str
                                       ) -> bool:
             """
-            Запускает шейпер входных данных.
-            Валидирует данные и добавляет их в задание, если они валидны.
+            Вызывает функцию шейпера входных данных из пайплайна
+            и проверяет корректность возвращённых данных.
+
+            :param self: Экземпляр задания.
+            :param script_renderer: Рендерер скриптов.
+            :param head_job_node: Имя ноды для головной задачи.
+            :return: True, если данные валидны и скрипт создан.
             """
             def __generate_start_script(nxf_cmd:str) -> Path:
                 start_script = script_renderer.render_starting_script(
@@ -410,6 +283,12 @@ class ProcessingTask:
         def __form_task_directories(
                                     self:ProcessingTask
                                    ) -> bool:
+            """
+            Создаёт директории для обработки и хранения результатов.
+
+            :param self: Экземпляр задания.
+            :return: True, если директории созданы и доступны.
+            """
             pipepline_subdirs = Path(self.pipeline.name) / Path(self.pipeline.version.replace('.', ''))
             self.data.work_dir = (self.sample_meta.processing_dir / pipepline_subdirs).resolve()
             self.data.result_dir = (self.sample_meta.result_dir / pipepline_subdirs).resolve()
@@ -438,8 +317,10 @@ class ProcessingTask:
                                              self:ProcessingTask
                                             ) -> bool:
             """
-            Формирует пути для файлов stdout/stderr/exitcode головной задачи Slurm без их создания.
-            Возвращает True, если пути сформированы успешно, и False в противном случае.
+            Формирует пути к служебным файлам Slurm без их создания.
+
+            :param self: Экземпляр задания.
+            :return: True, если пути сформированы успешно.
             """
             try:
                 self.data.head_job_stdout = (self.data.log_dir / "slurm" / f"{self.task_id}.stdout").resolve()
@@ -455,7 +336,7 @@ class ProcessingTask:
         head_job_pipe_files_paths_present = False
         # Формируем основные собственные атрибуты
         # Обновление меток времени
-        self.created = self.__update_time_mark()
+        self.created = self._update_time_mark()
         # формируем пути для обработки и хранения данных
         task_directories_prepared = __form_task_directories(self)
         if task_directories_prepared:
@@ -487,10 +368,12 @@ class ProcessingTask:
                       job_id:int
                      ) -> None:
         """
-        Перевод задания в состояние поставленного в очередь.
+        Переводит задание в состояние 'queued'.
+
+        :param job_id: Идентификатор задачи в Slurm.
         """
         # Обновление меток времени
-        now = self.__update_time_mark()
+        now = self._update_time_mark()
         self.queued = now
         self.time_in_processing = "00:00:00"
         self.status = "queued"
@@ -504,10 +387,12 @@ class ProcessingTask:
                 slurm_data: Dict[str, Any]
                ) -> None:
         """
-        Обновляет данные задания на основе данных Slurm, полученных через squeue.
+        Обновляет состояние задания на основе данных из Slurm.
+
+        :param slurm_data: Данные о задаче из squeue.
         """
         # Обновление меток времени
-        now = self.__update_time_mark()   
+        now = self._update_time_mark()   
         self.time_in_processing = self._get_time_str((now - self.queued).total_seconds()) # type: ignore
         
         # Обновление данных заданий Slurm
@@ -532,12 +417,13 @@ class ProcessingTask:
                   self
                  ) -> None:
         """
-        Перевод задания в состояние завершённого.
-        Обновление статуса в соответствии со статусом главной задачи Slurm.
-        Сбор информации о выходных файлах.
+        Завершает выполнение задания.
+
+        Обновляет статус, собирает информацию о выходных файлах,
+        обновляет метаданные образца и результатов.
         """
         # Обновление меток времени
-        now = self.__update_time_mark()
+        now = self._update_time_mark()
         self.finish = now
         if self.slurm_main_job:
             self.slurm_main_job._complete(
@@ -545,20 +431,35 @@ class ProcessingTask:
                                           self.data.head_job_exitcode_f
                                          )
             self.status = 'completed' if self.slurm_main_job.status == 'completed' else 'failed'
+        
         # Поиск выходных файлов в папке результата
         self.data._check_output_files()
+        # Дополнение выходных данных информацией из шейпера
+        if self.pipeline.shape_output:
+            shaper_data = self.pipeline.shape_output(
+                                                     self.data.result_dir,
+                                                     self.data.log_dir
+                                                    )
+            if shaper_data:
+                for group, group_data in shaper_data.items():
+                    if group in self.data.output_data:
+                        self.data.output_data[group].update(group_data)
+                    else:
+                        self.data.output_data[group] = group_data
+
         # Добавляем информацию о выходных файлах в ResultMeta
         self.result_meta.results[self.pipeline.id] = self.data.output_data
         # Обновляем статус задания в SampleMeta
         self.sample_meta.tasks[self.pipeline.id] = {self.task_id:self.status}
         return None
 
-    def __update_time_mark(
+    def _update_time_mark(
                            self
                           ) -> datetime:
         """
-        Обновляет метку времени последнего обновления.
-        Возвращает текущее время.
+        Обновляет временную метку последнего изменения.
+
+        :return: Текущее время в UTC.
         """
         now = datetime.now(timezone.utc)
         self.last_update = now
@@ -571,7 +472,10 @@ class ProcessingTask:
                       seconds:float = 0.0
                      ) -> str:
         """
-        Конвертирует секунды в строку формата "HH:MM:SS".
+        Преобразует количество секунд в строку формата ЧЧ:ММ:СС.
+
+        :param seconds: Количество секунд.
+        :return: Строка в формате 'HH:MM:SS'.
         """
         if all([
                 seconds,

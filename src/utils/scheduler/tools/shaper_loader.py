@@ -1,6 +1,10 @@
 # encoding: utf-8
 """
-Модуль для загрузки функций из data_shaper_*.py
+Модуль для динамической загрузки функций формирования данных из модулей data_shaper_*.py.
+
+Позволяет загружать пользовательские функции generate_pipeline_input_data и
+generate_pipeline_output_data из внешних Python-файлов, что обеспечивает гибкость
+и расширяемость обработки входных и выходных данных пайплайнов.
 """
 from __future__ import annotations
 from classes.processing_task import ProcessingTask 
@@ -31,7 +35,7 @@ IDataFunc = Callable[
 # на вход подаются: папка результатов, папка с QC, папка с логами
 # На выходе - словарь вида {коллекция: {вид данных: данные}}
 ODataFunc = Callable[
-                     [Path, Path, Path],
+                     [Path, Path],
                      Dict[str, Dict[str, Any]]
                     ]
 InputDataFunc = IDataFunc
@@ -42,19 +46,36 @@ def load_shaper_functions(
                           shaper_path: Path
                          ) -> Tuple[InputDataFunc, OutputDataFunc]:
     """
-    Динамически загружает функции generate_pipeline_input_data и generate_pipeline_output_data
-    из указанного .py-файла.
+    Динамически загружает функции формирования данных из указанного Python-модуля.
 
-    :param shaper_path: Путь к файлу data_shaper
-    :return: Кортеж (input_func, output_func)
-    :raises ImportError: Если файл не найден или функции отсутствуют
+    Ожидает наличие в файле двух функций:
+    - generate_pipeline_input_data
+    - generate_pipeline_output_data
+
+    Поддерживает повторную загрузку без дублирования модулей за счёт проверки sys.modules.
+
+    :param shaper_path: Путь к файлу модуля data_shaper (например, data_shaper_fastq.py).
+    :type shaper_path: Path
+    :return: Кортеж из двух функций:
+             (generate_pipeline_input_data, generate_pipeline_output_data)
+    :rtype: Tuple[InputDataFunc, OutputDataFunc]
+    :raises FileNotFoundError: Если файл shaper_path не существует.
+    :raises ImportError: Если не удалось загрузить модуль или его спецификацию.
+    :raises AttributeError: Если в модуле отсутствует одна из требуемых функций.
+    :raises TypeError: Если найденный атрибут не является вызываемой функцией.
     """
     def _check_if_not_exist(
                             module: Any,
                             func_name:str
                            ) -> None:
         """
-        Проверяет, что функция существует в модуле.
+        Проверяет, что в модуле присутствует функция с указанным именем.
+
+        :param module: Загруженный модуль.
+        :type module: Any
+        :param func_name: Имя ожидаемой функции.
+        :type func_name: str
+        :raises AttributeError: Если функция не найдена в модуле.
         """
         if not hasattr(module, func_name):
             logger.error(f"Function '{func_name}' not found in {shaper_path}")
@@ -65,7 +86,13 @@ def load_shaper_functions(
                            func: Any
                           ) -> None:
         """
-        Проверяет, что объект является функцией Python.
+        Проверяет, что указанный объект является вызываемой функцией.
+
+        :param func_name: Имя функции для проверки.
+        :type func_name: str
+        :param func: Объект, который должен быть функцией.
+        :type func: Any
+        :raises TypeError: Если объект не является вызываемым.
         """
         if not callable(func):
             logger.error(f"{func_name} is not callable in {shaper_path}")
