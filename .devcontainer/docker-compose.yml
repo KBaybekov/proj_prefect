@@ -6,8 +6,9 @@ services:
     build:
       context: ..
       dockerfile: .devcontainer/Dockerfile
-    ports:
-      - "8080:8080"
+    command: sleep infinity
+    #ports:
+    #  - "8080:8080"
     environment:
       MONGO_URI: mongodb://mongo:27017/my_database
     volumes:
@@ -24,8 +25,8 @@ services:
     environment:
       MONGO_INITDB_ROOT_USERNAME: root
       MONGO_INITDB_ROOT_PASSWORD: password
-    ports:
-      - "27017:27017"
+    #ports:
+    #  - "27017:27017"
     volumes:
       - mongo_data:/data/db
       - ./init-mongo.js:/docker-entrypoint-initdb.d/init-mongo.js:ro

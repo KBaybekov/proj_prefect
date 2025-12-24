@@ -19,6 +19,5 @@
             }
         }
     },
-    "forwardPorts": [27017],
     "postAttachCommand": "echo 'Dev container ready. MongoDB available at: mongodb://mongo:27017'"
 }

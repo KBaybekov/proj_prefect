@@ -18,3 +18,4 @@ WORKDIR /workspaces
 #RUN pip install pylint black mypy
 
 CMD ["/bin/bash"]
+#CMD ["sleep infinity"]
