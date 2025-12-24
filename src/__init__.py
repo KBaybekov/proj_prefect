@@ -106,7 +106,7 @@ def load_yaml(
         logger.debug(f"Пустой словарь из YAML {file_path}")
     return data
 
-def save_yaml(filename:str, path:str, data:dict) -> str:
+def save_yaml(filename:str, path:str, data:dict) -> Path:
     """
     Сохраняет словарь в YAML-файл.
 
@@ -123,8 +123,8 @@ def save_yaml(filename:str, path:str, data:dict) -> str:
     :rtype: str
     """
     # Полный путь к файлу
-    file_path = f'{path}{filename}.yaml'
-
+    file_path = (Path(path) / f'{filename}.yaml').resolve()
+    
     # Записываем данные в YAML-файл
     with open(file_path, 'w') as yaml_file:
         dump(data, yaml_file, default_flow_style=False, sort_keys=False)
