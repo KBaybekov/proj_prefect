@@ -3,9 +3,11 @@
 /archive
 /docs/g*/
 /logs
-/src/test*.py
+/src/tst*.py
 /test_space
 /tmp
 /src/wipe_db_data.py
 /src/unused.py
+/tests/ai
 /.vscode
+*.pyc

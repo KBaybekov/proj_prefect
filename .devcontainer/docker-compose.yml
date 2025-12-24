@@ -1,0 +1,40 @@
+version: '3.8'
+
+services:
+  app:
+    container_name: prp_dev
+    build:
+      context: ..
+      dockerfile: .devcontainer/Dockerfile
+    ports:
+      - "8080:8080"
+    environment:
+      MONGO_URI: mongodb://mongo:27017/my_database
+    volumes:
+      - ../..:/workspaces:cached
+    init: true
+    depends_on:
+      - mongo
+    networks:
+      - dev_network
+
+  mongo:
+    container_name: prp_db
+    image: mongo:latest
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: root
+      MONGO_INITDB_ROOT_PASSWORD: password
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo_data:/data/db
+      - ./init-mongo.js:/docker-entrypoint-initdb.d/init-mongo.js:ro
+    networks:
+      - dev_network
+
+volumes:
+  mongo_data:
+
+networks:
+  dev_network:
+    driver: bridge
