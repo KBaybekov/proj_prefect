@@ -2,6 +2,9 @@
     "name": "Python Dev with MongoDB",
     "dockerComposeFile": "docker-compose.yml",
     "service": "app",
+    "containerEnv": {
+        "PYTHONDONTWRITEBYTECODE": "1"
+    },
     "workspaceFolder": "/workspaces/${localWorkspaceFolderBasename}",
     "customizations": {
         "vscode": {
