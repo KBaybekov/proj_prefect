@@ -1,0 +1,149 @@
+# encoding: utf-8
+"""
+Модуль для динамической загрузки функций формирования данных из модулей data_shaper_*.py.
+
+Позволяет загружать пользовательские функции generate_pipeline_input_data и
+generate_pipeline_output_data из внешних Python-файлов, что обеспечивает гибкость
+и расширяемость обработки входных и выходных данных пайплайнов.
+"""
+from __future__ import annotations
+from classes.processing_task import ProcessingTask 
+from pathlib import Path
+from typing import Callable, Tuple, Any, Dict, Set
+import importlib.util
+import sys
+from modules.logger import get_logger
+
+logger = get_logger(__name__)
+
+
+# Типы для аннотаций
+
+# На вход подаются: мета задания
+# На выходе:
+#       CLI команда Nextflow;
+#       все входные данные, распределённые по группам (есть отдельный ключ "size" с общим размером данных);
+#       Группы ожидаемых выходных данных {группа_файлов:{тип_файлов:маска_файлов}}
+IDataFunc = Callable[
+                     [ProcessingTask],
+                     Tuple[
+                           str,
+                           Dict[str, Set[Path]],
+                           Dict[str, Dict[str,str]]
+                          ]
+                    ]
+# на вход подаются: папка результатов, папка с QC, папка с логами
+# На выходе - словарь вида {коллекция: {вид данных: данные}}
+ODataFunc = Callable[
+                     [Path, Path],
+                     Dict[str, Dict[str, Any]]
+                    ]
+InputDataFunc = IDataFunc
+OutputDataFunc = ODataFunc
+
+
+def load_shaper_functions(
+                          shaper_path: Path
+                         ) -> Tuple[InputDataFunc, OutputDataFunc]:
+    """
+    Динамически загружает функции формирования данных из указанного Python-модуля.
+
+    Ожидает наличие в файле двух функций:
+    - generate_pipeline_input_data
+    - generate_pipeline_output_data
+
+    Поддерживает повторную загрузку без дублирования модулей за счёт проверки sys.modules.
+
+    :param shaper_path: Путь к файлу модуля data_shaper (например, data_shaper_fastq.py).
+    :type shaper_path: Path
+    :return: Кортеж из двух функций:
+             (generate_pipeline_input_data, generate_pipeline_output_data)
+    :rtype: Tuple[InputDataFunc, OutputDataFunc]
+    :raises FileNotFoundError: Если файл shaper_path не существует.
+    :raises ImportError: Если не удалось загрузить модуль или его спецификацию.
+    :raises AttributeError: Если в модуле отсутствует одна из требуемых функций.
+    :raises TypeError: Если найденный атрибут не является вызываемой функцией.
+    """
+    def _check_if_not_exist(
+                            module: Any,
+                            func_name:str
+                           ) -> None:
+        """
+        Проверяет, что в модуле присутствует функция с указанным именем.
+
+        :param module: Загруженный модуль.
+        :type module: Any
+        :param func_name: Имя ожидаемой функции.
+        :type func_name: str
+        :raises AttributeError: Если функция не найдена в модуле.
+        """
+        if not hasattr(module, func_name):
+            logger.error(f"Function '{func_name}' not found in {shaper_path}")
+            raise AttributeError(f"Function '{func_name}' not found in {shaper_path}")
+    
+    def _check_if_not_func(
+                           func_name: str,
+                           func: Any
+                          ) -> None:
+        """
+        Проверяет, что указанный объект является вызываемой функцией.
+
+        :param func_name: Имя функции для проверки.
+        :type func_name: str
+        :param func: Объект, который должен быть функцией.
+        :type func: Any
+        :raises TypeError: Если объект не является вызываемым.
+        """
+        if not callable(func):
+            logger.error(f"{func_name} is not callable in {shaper_path}")
+            raise TypeError(f"{func_name} is not callable in {shaper_path}")
+
+    if not shaper_path.exists():
+        logger.error(f"Data shaper not found: {shaper_path}")
+        raise FileNotFoundError(f"Data shaper not found: {shaper_path}")
+
+    module_name = f"{shaper_path.stem}"  # Уникальное имя модуля
+    logger.debug(f"Начало импорта модуля {module_name}")
+
+    # Проверяем sys.modules, чтобы избежать повторной загрузки
+    if module_name in sys.modules:
+        logger.debug(f"Модуль найден в sys.modules: {module_name}. Импорт...")
+        module = sys.modules[module_name]
+    
+    else:
+        logger.debug(f"Начало загрузки модуля {module_name}")
+        spec = importlib.util.spec_from_file_location(module_name, shaper_path)
+        if spec is None or spec.loader is None:
+            logger.error(f"Cannot load spec from: {shaper_path}")
+            raise ImportError(f"Cannot load spec from {shaper_path}")
+        logger.debug(f"Загружен ModuleSpec для {module_name}")
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[module_name] = module
+
+        try:
+            spec.loader.exec_module(module)
+            logger.debug(f"Модуль загружен: {module_name}")
+        except Exception as e:
+            logger.error(f"Модуль НЕ загружен: {module_name}")
+            raise ImportError(f"Failed to load shaper {shaper_path}: {e}") from e
+    
+    logger.debug(f"Успешный импорт {module_name}")
+    
+    # Проверяем существование нужных функций в модуле
+    for name in [
+                 "generate_pipeline_input_data",
+                 "generate_pipeline_output_data"
+                ]:
+        _check_if_not_exist(module, name)   
+
+    # Проверяем, что функции действительно являются функциями
+    input_func = getattr(module, "generate_pipeline_input_data")
+    output_func = getattr(module, "generate_pipeline_output_data")
+    for name, func  in {
+                        "generate_pipeline_input_data":input_func,
+                        "generate_pipeline_output_data":output_func
+                       }:
+        _check_if_not_func(name, func)
+    
+    logger.debug(f"Успешный импорт функций из {module_name}")
+    return input_func, output_func
