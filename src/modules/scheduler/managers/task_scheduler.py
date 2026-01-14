@@ -2,8 +2,8 @@ from typing import Any, Dict, List, Optional
 from prefect import task
 from threading import Timer
 from dataclasses import dataclass, field
-from utils.db.db import ConfigurableMongoDAO
-from utils.logger import get_logger
+from modules.db.db import ConfigurableMongoDAO
+from modules.logger import get_logger
 from pathlib import Path
 from .slurm_manager import SlurmManager
 from scheduler import *

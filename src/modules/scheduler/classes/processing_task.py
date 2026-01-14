@@ -6,7 +6,7 @@ from typing import Any, Dict, Tuple, Optional, Set, Union
 from scheduler import *
 from tools.script_renderer import ScriptRenderer
 from . import *
-from utils.logger import get_logger
+from modules.logger import get_logger
 
 logger = get_logger(__name__)
 

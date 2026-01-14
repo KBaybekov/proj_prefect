@@ -7,7 +7,7 @@
 from . import remove_symlink
 import os
 import threading
-from utils.logger import get_logger
+from modules.logger import get_logger
 from datetime import datetime
 from typing import (
                     Dict,
@@ -30,7 +30,7 @@ from watchdog.events import (
                              FileDeletedEvent
                             )
 
-from utils.filesystem.metas import SourceFileMeta
+from modules.filesystem.metas import SourceFileMeta
 
 
 logger = get_logger(__name__)

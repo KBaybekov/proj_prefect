@@ -17,7 +17,7 @@ from threading import Timer
 from enum import Enum
 from dataclasses import dataclass, field, fields, asdict, is_dataclass
 from pathlib import Path
-from utils.logger import get_logger
+from modules.logger import get_logger
 
 logger = get_logger(name=__name__)
 

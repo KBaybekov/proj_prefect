@@ -2,7 +2,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, Set
 from scheduler import *
-from utils.logger import get_logger
+from modules.logger import get_logger
 
 logger = get_logger(__name__)
 

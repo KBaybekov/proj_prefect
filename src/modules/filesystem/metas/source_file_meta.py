@@ -4,7 +4,7 @@
 метаданными отдельных файлов, поступающих в систему.
 Содержит информацию о расположении, состоянии, свойствах и принадлежности файла к батчу/образцу.
 """
-from utils.logger import get_logger
+from modules.logger import get_logger
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from hashlib import blake2s as hashlib_blake2s

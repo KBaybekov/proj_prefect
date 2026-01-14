@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Callable, Tuple, Any, Dict, Set
 import importlib.util
 import sys
-from utils.logger import get_logger
+from modules.logger import get_logger
 
 logger = get_logger(__name__)
 

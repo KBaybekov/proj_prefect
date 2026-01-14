@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Optional
 from scheduler import *
-from utils.logger import get_logger
+from modules.logger import get_logger
 
 logger = get_logger(__name__)
 

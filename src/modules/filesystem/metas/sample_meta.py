@@ -12,7 +12,7 @@
 from . import update_file_in_meta, min_datetime, max_datetime, update_fingerprint, generate_final_fingerprint
 from .source_file_meta import SourceFileMeta
 from .batch_meta import BatchMeta
-from utils.logger import get_logger
+from modules.logger import get_logger
 from dataclasses import dataclass, field
 from datetime import datetime
 from hashlib import blake2s as hashlib_blake2s

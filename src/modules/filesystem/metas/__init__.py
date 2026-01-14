@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 
 from __future__ import annotations
-from utils.logger import get_logger
+from modules.logger import get_logger
 from datetime import datetime
 from hashlib import blake2s as hashlib_blake2s
 from pathlib import Path

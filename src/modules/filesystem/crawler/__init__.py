@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 
 from __future__ import annotations
-from utils.logger import get_logger
+from modules.logger import get_logger
 from os import scandir
 from pathlib import Path
 from typing import List, Tuple

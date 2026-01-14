@@ -12,13 +12,13 @@
 from __future__ import annotations
 from . import get_files_by_extension_in_dir_tree, remove_symlink
 from .fs_watcher import FsWatcher
-from utils.db.db import ConfigurableMongoDAO
-from utils.filesystem.metas import (
+from modules.db.db import ConfigurableMongoDAO
+from modules.filesystem.metas import (
                                     BatchMeta,
                                     SampleMeta,
                                     SourceFileMeta                                    
                                    )
-from utils.logger import get_logger
+from modules.logger import get_logger
 from datetime import datetime
 from pathlib import Path
 from threading import Lock, Timer 

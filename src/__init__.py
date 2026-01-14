@@ -2,10 +2,7 @@ from argparse import ArgumentParser, RawDescriptionHelpFormatter
 from pathlib import Path
 from yaml import dump, safe_load, YAMLError
 
-from utils.db.db import ConfigurableMongoDAO
-from utils.filesystem.crawler.fs_crawler import FsCrawler
-from utils.scheduler.managers.task_scheduler import TaskScheduler
-from utils.logger import get_logger
+from modules.logger import get_logger
 
 logger = get_logger(name=__name__)
 
