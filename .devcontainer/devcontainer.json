@@ -6,6 +6,7 @@
     "customizations": {
         "vscode": {
             "extensions": [
+                "be5invis.toml",
                 "samuelcolvin.jinjahtml",
                 "codeviz.codeviz",
                 "hediet.vscode-drawio",
@@ -13,6 +14,7 @@
                 "ms-python.pylance",
                 "ms-azuretools.vscode-docker",
                 "nf-core.nf-core-extensionpack",
+                "ninoseki.vscode-mogami",
                 "/workspaces/${localWorkspaceFolderBasename}/.devcontainer/extensions/gigacode-vscode-25.11.671.vsix"
             ],
             "settings": {
