@@ -17,7 +17,7 @@ filterwarnings = [
 log_cli = false
 log_file = "logs/pytest-logs.txt"
 markers = [
-    "smoke": "Быстрые тесты"
+    "smoke"
     ]
 required_plugins = [
     "pytest-cov",
