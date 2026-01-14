@@ -12,7 +12,8 @@
                 "ms-python.python",
                 "ms-python.pylance",
                 "ms-azuretools.vscode-docker",
-                "nf-core.nf-core-extensionpack"
+                "nf-core.nf-core-extensionpack",
+                "/workspaces/${localWorkspaceFolderBasename}/.devcontainer/extensions/gigacode-vscode-25.11.671.vsix"
             ],
             "settings": {
                 "python.defaultInterpreterPath": "/usr/local/bin/python",
@@ -23,6 +24,5 @@
             }
         }
     },
-    "postCreateCommand": "code --install-extension /workspaces/${localWorkspaceFolderBasename}/.devcontainer/extensions/gigacode-vscode-25.11.671.vsix",
     "postAttachCommand": "echo 'Dev container ready. MongoDB available at: mongodb://mongo:27017'"
 }
