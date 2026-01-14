@@ -30,5 +30,5 @@ required_plugins = [
     ]
 strict = true
 testpaths = [
-    "tests"
+    "tests/unit"
     ]
