@@ -15,8 +15,9 @@ RUN pip install --no-cache-dir -r /tmp/requirements.txt
 WORKDIR /workspaces
 
 # Установка расширения ИИ
-COPY ./extensions/gigacode-vscode-25.11.671.vsix /tmp/gigacode-vscode-25.11.671.vsix
-RUN code --install-extension /tmp/gigacode-vscode-25.11.671.vsix && rm /tmp/gigacode-vscode-25.11.671.vsix
+#RUN mkdir /workspaces/
+#COPY .devcontainer/extensions/gigacode-vscode-25.11.671.vsix /tmp/gigacode-vscode-25.11.671.vsix
+#RUN code --install-extension /tmp/gigacode-vscode-25.11.671.vsix && rm /tmp/gigacode-vscode-25.11.671.vsix
 
 CMD ["/bin/bash"]
 #CMD ["sleep infinity"]

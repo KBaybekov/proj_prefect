@@ -23,5 +23,6 @@
             }
         }
     },
+    "postCreateCommand": "code --install-extension /workspaces/${localWorkspaceFolderBasename}/.devcontainer/extensions/gigacode-vscode-25.11.671.vsix",
     "postAttachCommand": "echo 'Dev container ready. MongoDB available at: mongodb://mongo:27017'"
 }
