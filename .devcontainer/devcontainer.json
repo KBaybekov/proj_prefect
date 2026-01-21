@@ -4,7 +4,7 @@
     "service": "app",
     "containerEnv": {
         "PYTHONDONTWRITEBYTECODE": "1"
-    },
+        },
     "workspaceFolder": "/workspaces/${localWorkspaceFolderBasename}",
     "customizations": {
         "vscode": {
