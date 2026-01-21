@@ -67,12 +67,12 @@ class FsCrawler():
         self.link_dir: Path = Path()
         self.processing_dir: Path = Path()
         self.result_dir: Path = Path()
-        self.filetypes: Tuple[str] = tuple()
+        self.filetypes: Tuple[str]
         
         self.unique_file_properties = ['filepath', 'size', 'dev', 'ino', 'modified']
         # Списки саммери
         self.summaries: Dict[str, Set[Path]] = {"final_summary": set(), "sequencing_summary": set()}
-        patterns2watch = [f"*.{filetype}" for filetype in self.filetypes]
+        patterns2watch = []
         patterns2watch.extend([f"*{summary}*.txt" for summary in self.summaries.keys()])
         self.event_handler = FsWatcher(
                                        patterns=patterns2watch,
@@ -285,7 +285,7 @@ class FsCrawler():
                     try:
                         fs_files.remove(file)
 
-                    except ValueError:
+                    except KeyError:
                         logger.warning(f"Файл {file} уже был обработан")    
                     
         # Теперь проходимся по всем файлам в БД, которые не были обработаны, а значит, отсутствуют в ФС

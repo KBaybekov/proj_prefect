@@ -228,7 +228,7 @@ class FsWatcher(PatternMatchingEventHandler):
                     """Удаляет файл отчёта из соответствующей коллекции."""
 
                     if file in self.crawler.summaries[summary_type]:
-                        self.crawler.summaries[summary_type].remove(file)
+                        self.crawler.summaries[summary_type].discard(file)
                     return None
                 
                 src_summary = Path(str(event.src_path)).resolve()
