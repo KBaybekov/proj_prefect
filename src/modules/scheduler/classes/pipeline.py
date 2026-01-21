@@ -1,5 +1,5 @@
 from tools.shaper_loader import load_shaper_functions
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from typing import Any, Callable, Dict, List, Optional
 from pathlib import Path
 
@@ -190,7 +190,7 @@ class Pipeline:
         :rtype: Dict[str, Any]
         """
         keys2remove = []
-        dict_obj = self.__dict__
+        dict_obj = asdict(self)
         for key in dict_obj:
 
             if key not in [

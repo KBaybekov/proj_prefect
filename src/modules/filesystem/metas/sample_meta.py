@@ -13,7 +13,7 @@ from . import update_file_in_meta, min_datetime, max_datetime, update_fingerprin
 from .source_file_meta import SourceFileMeta
 from .batch_meta import BatchMeta
 from modules.logger import get_logger
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from hashlib import blake2s as hashlib_blake2s
 from pathlib import Path
@@ -176,7 +176,7 @@ class SampleMeta:
         :return: Сериализованный словарь с метаданными образца.
         :rtype: Dict[str, Any]
         """
-        dict_obj = self.__dict__
+        dict_obj = asdict(self)
         keys2remove = []
         for key in dict_obj:
             if key.startswith("_"):

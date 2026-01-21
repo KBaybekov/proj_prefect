@@ -1,4 +1,4 @@
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from os import access as os_access, W_OK, R_OK
 from pathlib import Path
@@ -132,7 +132,7 @@ class ProcessingTask:
         :return: Словарь с данными задания.
         """
         keys2remove = []
-        dict_obj = self.__dict__
+        dict_obj = asdict(self)
         for key in dict_obj:
             
             if key.startswith("_"):

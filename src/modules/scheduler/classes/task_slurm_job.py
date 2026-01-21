@@ -1,4 +1,4 @@
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Optional
@@ -139,7 +139,7 @@ class TaskSlurmJob:
         :return: Словарь с атрибутами объекта.
         :rtype: Dict[str, Any]
         """
-        dict_obj = self.__dict__
+        dict_obj = asdict(self)
         for key in dict_obj:
 
             if key in ['work_dir', 'stderr', 'stdout']:
@@ -158,8 +158,9 @@ class TaskSlurmJob:
         :type slurm_data: Dict[str, Any]
         """
         if slurm_data:
-            for attr, value in self.__dict__.items():
-                if attr in ['job_id', 'start', 'limit']: continue
+            for attr, value in asdict(self).items():
+                if attr in ['job_id', 'start', 'limit']:
+                    continue
                 setattr(self, attr, slurm_data.get(attr, value))
             self.status = slurm_data['status']
 

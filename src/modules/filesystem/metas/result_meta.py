@@ -5,7 +5,7 @@
 Класс ResultMeta предназначен для сбора, сериализации и хранения результатов
 анализа образцов, полученных в ходе выполнения различных биоинформатических пайплайнов.
 """
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from typing import Any, Dict, Optional
 from modules.logger import get_logger
@@ -99,5 +99,5 @@ class ResultMeta:
         :return: Сериализованный словарь со всеми полями объекта.
         :rtype: Dict[str, Any]
         """
-        dict_obj = self.__dict__
+        dict_obj = asdict(self)
         return dict_obj

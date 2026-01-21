@@ -1,4 +1,4 @@
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Dict, Set
 from scheduler import *
@@ -134,7 +134,7 @@ class TaskData:
 
         :return: Словарь с сериализованными данными.
         """
-        dict_obj = self.__dict__
+        dict_obj = asdict(self)
         for key in dict_obj:
 
             if key == "input_data":

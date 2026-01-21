@@ -12,7 +12,7 @@
 from . import update_file_in_meta, min_datetime, max_datetime, update_fingerprint, generate_final_fingerprint
 from .source_file_meta import SourceFileMeta
 from modules.logger import get_logger
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from hashlib import blake2s as hashlib_blake2s
 from pathlib import Path
@@ -157,7 +157,7 @@ class BatchMeta:
         :rtype: Dict[str, Any]
         """
         keys2remove = []
-        dict_obj = self.__dict__
+        dict_obj = asdict(self)
         for key in dict_obj:
             if key.startswith("_"):
                 keys2remove.append(key)

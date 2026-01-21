@@ -5,7 +5,7 @@
 Содержит информацию о расположении, состоянии, свойствах и принадлежности файла к батчу/образцу.
 """
 from modules.logger import get_logger
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from hashlib import blake2s as hashlib_blake2s
 from pathlib import Path
@@ -185,7 +185,7 @@ class SourceFileMeta:
         :return: Сериализованный словарь с метаданными файла.
         :rtype: Dict[str, Any]
         """
-        dict_obj = self.__dict__
+        dict_obj = asdict(self)
         for key in [
                     "filepath",
                     "symlink_dir",
